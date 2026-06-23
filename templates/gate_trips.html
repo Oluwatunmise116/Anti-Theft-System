@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}Trip Log — LicenseDB{% endblock %}
+{% block topbar_title %}Trip Log{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <div class="page-greeting">Trip <span>Log</span></div>
+        <div class="page-sub">{{ active|length }} vehicle{{ 's' if active|length != 1 }} currently inside.</div>
+    </div>
+    <div class="page-actions">
+        {% if history %}
+        <form method="POST" action="{{ url_for('gate_trips_clear_history') }}"
+              onsubmit="return confirm('Clear completed trips (EXITED / DENIED)? Active vehicles are kept. This cannot be undone.');">
+            <button type="submit" class="btn btn-outline">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"
+                     viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+                Clear Completed
+            </button>
+        </form>
+        {% endif %}
+        <form method="POST" action="{{ url_for('gate_trips_clear_all') }}"
+              onsubmit="return confirm('Delete ALL trip records including vehicles currently inside? This cannot be undone.');">
+            <button type="submit" class="btn btn-red">
+                <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"
+                     viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                Clear All
+            </button>
+        </form>
+        <a href="{{ url_for('gate_entry') }}" class="btn btn-gold">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"
+                 viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
+            New Entry
+        </a>
+    </div>
+</div>
+
+{% if active %}
+<!-- ACTIVE TRIPS -->
+<div class="card" style="margin-bottom:18px;">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Vehicles Inside</div>
+            <div class="card-sub">{{ active|length }} currently on premises</div>
+        </div>
+    </div>
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Plate</th>
+                    <th>Entry Time</th>
+                    <th>Face</th>
+                    <th>FP</th>
+                    <th></th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in active %}
+                <tr>
+                    <td><span class="mono" style="font-size:11px;color:var(--text-mute)">#{{ t.id }}</span></td>
+                    <td>
+                        {% if t.vehicle_photo_path %}
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            <img src="{{ t.vehicle_photo_path | gate_photo_url }}"
+                                 style="width:40px;height:30px;object-fit:cover;border-radius:5px;
+                                        border:1px solid var(--border);">
+                            <strong class="mono" style="letter-spacing:1px;">{{ t.plate_number }}</strong>
+                        </div>
+                        {% else %}
+                        <strong class="mono" style="letter-spacing:1px;">{{ t.plate_number }}</strong>
+                        {% endif %}
+                    </td>
+                    <td style="font-size:12px;color:var(--text-dim);" class="mono">
+                        {{ t.entry_time[:16] if t.entry_time else '—' }}
+                    </td>
+                    <td>
+                        {% if t.face_encoding %}
+                            <span class="badge badge-green"><span class="dot"></span>Yes</span>
+                        {% else %}
+                            <span class="badge badge-grey"><span class="dot"></span>No</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if t.fingerprint_template %}
+                            <span class="badge badge-green"><span class="dot"></span>Yes</span>
+                        {% else %}
+                            <span class="badge badge-grey"><span class="dot"></span>No</span>
+                        {% endif %}
+                    </td>
+                    <td style="display:flex;gap:6px;align-items:center;">
+                        <a href="{{ url_for('gate_exit') }}?plate={{ t.plate_number }}"
+                           class="btn btn-outline btn-sm">Exit →</a>
+                        <form method="POST" action="{{ url_for('gate_trip_delete', trip_id=t.id) }}"
+                              onsubmit="return confirm('Delete entry record for {{ t.plate_number }}? This cannot be undone.');"
+                              style="margin:0;">
+                            <button type="submit" class="btn btn-red btn-sm"
+                                    title="Delete this entry record">
+                                <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"
+                                     viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/>
+                                    <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endif %}
+
+<!-- HISTORY -->
+<div class="card">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Trip History</div>
+            <div class="card-sub">Last {{ history|length }} trips</div>
+        </div>
+    </div>
+    {% if history %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>#</th>
+                    <th>Plate</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>Status</th>
+                    <th>Face Dist</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in history %}
+                <tr>
+                    <td><span class="mono" style="font-size:11px;color:var(--text-mute)">#{{ t.id }}</span></td>
+                    <td>
+                        <div style="display:flex;align-items:center;gap:8px;">
+                            {% if t.face_photo_path %}
+                            <img src="{{ t.face_photo_path | gate_photo_url }}"
+                                 style="width:28px;height:28px;object-fit:cover;border-radius:50%;
+                                        border:1px solid var(--border);">
+                            {% else %}
+                            <div class="avatar-sm" style="width:28px;height:28px;font-size:10px;">
+                                {{ t.plate_number[:2] }}
+                            </div>
+                            {% endif %}
+                            <strong class="mono" style="font-size:12px;letter-spacing:1px;">
+                                {{ t.plate_number }}
+                            </strong>
+                        </div>
+                    </td>
+                    <td class="mono" style="font-size:11.5px;color:var(--text-dim);">
+                        {{ t.entry_time[:16] if t.entry_time else '—' }}
+                    </td>
+                    <td class="mono" style="font-size:11.5px;color:var(--text-dim);">
+                        {{ t.exit_time[:16] if t.exit_time else '—' }}
+                    </td>
+                    <td>
+                        {% if t.status == 'INSIDE' %}
+                            <span class="badge badge-blue" style="background:var(--blue-wash);color:var(--blue);">
+                                <span class="dot" style="background:var(--blue);"></span>Inside
+                            </span>
+                        {% elif t.status == 'EXITED' %}
+                            <span class="badge badge-green"><span class="dot"></span>
+                                {{ t.exit_result or 'Exited' }}
+                            </span>
+                        {% elif t.status == 'DENIED' %}
+                            <span class="badge badge-red"><span class="dot"></span>Denied</span>
+                        {% else %}
+                            <span class="badge badge-grey"><span class="dot"></span>{{ t.status }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="mono" style="font-size:12px;">
+                        {% if t.face_distance is not none %}
+                            <span style="color:{% if t.face_distance <= 0.5 %}var(--green){% else %}var(--red){% endif %}">
+                                {{ '%.3f'|format(t.face_distance) }}
+                            </span>
+                        {% else %}—{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <svg width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <rect x="1" y="8" width="22" height="10" rx="2"/>
+            <path d="M5 8V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/>
+        </svg>
+        <p>No trips logged yet. <a href="{{ url_for('gate_entry') }}" style="color:var(--text);font-weight:600">Log the first entry →</a></p>
+    </div>
+    {% endif %}
+</div>
+
+<script>
+// Auto-prefill plate from URL param
+const urlParams = new URLSearchParams(window.location.search);
+</script>
+{% endblock %}

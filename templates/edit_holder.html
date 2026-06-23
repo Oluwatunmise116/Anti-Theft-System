@@ -1,0 +1,154 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ record.surname }} — LicenseDB{% endblock %}
+{% block topbar_title %}EDIT HOLDER{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <div class="page-title">Edit <span>{{ record.surname }}, {{ record.first_name }}</span></div>
+        <div class="text-dim" style="font-size:13px;margin-top:4px">Holder ID <span class="mono text-gold">#{{ record.id }}</span></div>
+    </div>
+    <a href="{{ url_for('view_holder', holder_id=record.id) }}" class="btn btn-outline">← Back</a>
+</div>
+
+<form method="POST" enctype="multipart/form-data">
+
+    <div class="card">
+        <div class="card-title">Personal Information</div>
+        <div class="form-grid">
+            <div class="form-group">
+                <label>Surname *</label>
+                <input type="text" name="surname" required value="{{ record.surname }}">
+            </div>
+            <div class="form-group">
+                <label>First Name *</label>
+                <input type="text" name="first_name" required value="{{ record.first_name }}">
+            </div>
+            <div class="form-group">
+                <label>Date of Birth *</label>
+                <input type="date" name="date_of_birth" required value="{{ record.date_of_birth }}">
+            </div>
+            <div class="form-group">
+                <label>Sex *</label>
+                <select name="sex" required>
+                    <option value="M" {% if record.sex == 'M' %}selected{% endif %}>Male</option>
+                    <option value="F" {% if record.sex == 'F' %}selected{% endif %}>Female</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Height (cm)</label>
+                <input type="number" name="height_cm" step="0.1" value="{{ record.height_cm or '' }}">
+            </div>
+            <div class="form-group">
+                <label>Blood Group</label>
+                <select name="blood_group">
+                    {% for bg in ['A+','A-','B+','B-','AB+','AB-','O+','O-'] %}
+                        <option value="{{ bg }}" {% if record.blood_group == bg %}selected{% endif %}>{{ bg }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Religion</label>
+                <input type="text" name="religion" value="{{ record.religion or '' }}">
+            </div>
+            <div class="form-group">
+                <label>Nationality</label>
+                <input type="text" name="nationality" value="{{ record.nationality or '' }}">
+            </div>
+        </div>
+    </div>
+
+    <div class="card mt-4">
+        <div class="card-title">Contact & Address</div>
+        <div class="form-grid">
+            <div class="form-group form-full">
+                <label>Street Address</label>
+                <input type="text" name="street_address" value="{{ record.street_address or '' }}">
+            </div>
+            <div class="form-group">
+                <label>State</label>
+                <input type="text" name="state" value="{{ record.state or '' }}">
+            </div>
+            <div class="form-group">
+                <label>Phone Number</label>
+                <input type="tel" name="phone_number" value="{{ record.phone_number or '' }}">
+            </div>
+            <div class="form-group">
+                <label>Next of Kin</label>
+                <input type="text" name="next_of_kin" value="{{ record.next_of_kin or '' }}">
+            </div>
+            <div class="form-group">
+                <label>Next of Kin Phone</label>
+                <input type="tel" name="next_of_kin_phone" value="{{ record.next_of_kin_phone or '' }}">
+            </div>
+        </div>
+    </div>
+
+    <div class="card mt-4">
+        <div class="card-title">License Details</div>
+        <div class="form-grid">
+            <div class="form-group">
+                <label>License Number</label>
+                <input type="text" name="license_number" value="{{ record.license_number or '' }}" class="mono">
+            </div>
+            <div class="form-group">
+                <label>License Class</label>
+                <select name="license_class">
+                    {% for cls in ['A','B','C','D','E','F'] %}
+                        <option value="{{ cls }}" {% if record.license_class == cls %}selected{% endif %}>Class {{ cls }}</option>
+                    {% endfor %}
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Date of Issue</label>
+                <input type="date" name="date_of_issue" value="{{ record.date_of_issue or '' }}">
+            </div>
+            <div class="form-group">
+                <label>Expiry Date</label>
+                <input type="date" name="expiry_date" value="{{ record.expiry_date or '' }}">
+            </div>
+            <div class="form-group">
+                <label>State of Issue</label>
+                <input type="text" name="state_of_issue" value="{{ record.state_of_issue or '' }}">
+            </div>
+            <div class="form-group">
+                <label>Authorized By</label>
+                <input type="text" name="authorized_by" value="{{ record.authorized_by or '' }}">
+            </div>
+            <div class="form-group form-full">
+                <label>Endorsements / Remarks</label>
+                <textarea name="endorsements" rows="2">{{ record.endorsements or '' }}</textarea>
+            </div>
+        </div>
+    </div>
+
+    <div class="card mt-4">
+        <div class="card-title">Update Photo</div>
+        <div class="form-group" style="max-width:320px">
+            <label>Upload New Photo (leave blank to keep existing)</label>
+            <input type="file" name="photo" accept="image/*" id="photoInput">
+        </div>
+        <img id="photoPreview" src="" style="display:none;width:120px;height:150px;object-fit:cover;border-radius:6px;border:2px solid var(--gold);margin-top:12px">
+    </div>
+
+    <div class="flex gap-2 mt-6">
+        <button type="submit" class="btn btn-gold">✓ Save Changes</button>
+        <a href="{{ url_for('view_holder', holder_id=record.id) }}" class="btn btn-outline">Cancel</a>
+    </div>
+</form>
+
+<script>
+document.getElementById('photoInput').addEventListener('change', function(e) {
+    const file = e.target.files[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onload = function(ev) {
+            const preview = document.getElementById('photoPreview');
+            preview.src = ev.target.result;
+            preview.style.display = 'block';
+        };
+        reader.readAsDataURL(file);
+    }
+});
+</script>
+{% endblock %}

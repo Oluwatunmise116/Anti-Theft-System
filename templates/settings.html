@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% block title %}Settings — LicenseDB{% endblock %}
+{% block topbar_title %}Settings{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <div class="page-greeting">Settings</div>
+        <div class="page-sub">Configure camera and system options.</div>
+    </div>
+</div>
+
+<!-- Camera selection -->
+<div class="card">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Camera Device</div>
+            <div class="card-sub">Select which camera to use for face capture and gate video feed.</div>
+        </div>
+        <button onclick="refreshCameras()" class="btn btn-outline btn-sm" id="refresh-btn">
+            <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+            Refresh
+        </button>
+    </div>
+
+    {% if cameras %}
+    <div id="camera-list" style="display:flex;flex-direction:column;gap:12px">
+        {% for cam in cameras %}
+        <div class="camera-card {% if cam.active %}active{% endif %}" data-index="{{ cam.index }}"
+             style="display:flex;align-items:center;gap:16px;padding:16px;border-radius:12px;
+                    border:2px solid {% if cam.active %}var(--green){% else %}var(--border){% endif %};
+                    background:{% if cam.active %}var(--green-wash){% else %}var(--bg){% endif %};
+                    transition:all 0.2s">
+            <!-- Snapshot preview -->
+            <div style="flex-shrink:0;width:120px;height:80px;border-radius:8px;overflow:hidden;
+                        background:var(--surface);border:1px solid var(--border);position:relative;cursor:pointer"
+                 onclick="loadSnapshot({{ cam.index }}, this)">
+                <img class="snap-img" style="width:100%;height:100%;object-fit:cover;display:none">
+                <div class="snap-placeholder" style="width:100%;height:100%;display:flex;align-items:center;
+                     justify-content:center;flex-direction:column;gap:4px;color:var(--text-mute)">
+                    <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                        <circle cx="12" cy="12" r="3"/><path d="M6.4 3h11.2L19 5H5z"/>
+                        <rect x="2" y="5" width="20" height="15" rx="2"/>
+                    </svg>
+                    <span style="font-size:10px">Click to preview</span>
+                </div>
+                <div class="snap-loading" style="display:none;position:absolute;inset:0;background:rgba(0,0,0,0.5);
+                     align-items:center;justify-content:center">
+                    <span style="color:#fff;font-size:11px">Loading…</span>
+                </div>
+            </div>
+
+            <!-- Info -->
+            <div style="flex:1;min-width:0">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+                    <strong style="font-size:14px">{{ cam.name }}</strong>
+                    {% if cam.active %}
+                        <span class="badge badge-green"><span class="dot"></span>Active</span>
+                    {% endif %}
+                </div>
+                <div class="mono" style="font-size:12px;color:var(--text-mute)">{{ cam.path }}</div>
+                <div style="font-size:12px;color:var(--text-mute);margin-top:2px">Index: {{ cam.index }}</div>
+            </div>
+
+            <!-- Action -->
+            <div style="flex-shrink:0">
+                {% if cam.active %}
+                    <span class="btn btn-outline btn-sm" style="opacity:0.5;cursor:default">Selected</span>
+                {% else %}
+                    <form method="POST" action="{{ url_for('settings_camera_select') }}">
+                        <input type="hidden" name="index" value="{{ cam.index }}">
+                        <button type="submit" class="btn btn-gold btn-sm">Use This Camera</button>
+                    </form>
+                {% endif %}
+            </div>
+        </div>
+        {% endfor %}
+    </div>
+
+    {% else %}
+    <div class="empty-state" style="padding:40px">
+        <svg width="44" height="44" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="3"/><path d="M6.4 3h11.2L19 5H5z"/>
+            <rect x="2" y="5" width="20" height="15" rx="2"/>
+        </svg>
+        <p>No readable cameras detected.<br>
+            <span style="font-size:12px;color:var(--text-mute)">Connect a USB camera and click Refresh, or check that the camera is not in use by another application.</span>
+        </p>
+        <button onclick="refreshCameras()" class="btn btn-outline btn-sm" style="margin-top:12px">Refresh</button>
+    </div>
+    {% endif %}
+
+    <!-- Manual index entry (for edge cases) -->
+    <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+        <div class="card-title" style="margin-bottom:10px">Enter Index Manually</div>
+        <form method="POST" action="{{ url_for('settings_camera_select') }}"
+              style="display:flex;gap:10px;align-items:flex-end">
+            <div class="form-group" style="margin:0;flex:0 0 160px">
+                <label>Camera Index</label>
+                <input type="number" name="index" min="0" max="99"
+                       value="{{ active_index }}" placeholder="e.g. 0">
+            </div>
+            <button type="submit" class="btn btn-outline">Apply</button>
+        </form>
+        <div style="font-size:11.5px;color:var(--text-mute);margin-top:8px">
+            Use this if your camera is detected but doesn't appear in the list above.
+            Index 0 is the default first USB camera on most systems.
+        </div>
+    </div>
+</div>
+
+<!-- Current config info -->
+<div class="card" style="margin-top:14px">
+    <div class="card-header"><div class="card-title">Current Configuration</div></div>
+    <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:14px">
+        <div class="detail-field">
+            <label>Active Camera Index</label>
+            <div class="value mono">{{ active_index }}</div>
+        </div>
+        <div class="detail-field">
+            <label>Camera Worker</label>
+            <div class="value">
+                <span id="worker-status">Checking…</span>
+            </div>
+        </div>
+        <div class="detail-field">
+            <label>face_recognition</label>
+            <div class="value">
+                {% if cameras is defined %}
+                    <span class="badge badge-green"><span class="dot"></span>Available</span>
+                {% else %}
+                    <span class="badge badge-red"><span class="dot"></span>Not installed</span>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+// Show camera worker status
+fetch('/api/stats').then(r=>r.json()).then(()=>{
+    // Camera worker is up if face search video feed responds
+    const img = new Image();
+    img.onload = () => document.getElementById('worker-status').innerHTML =
+        '<span class="badge badge-green"><span class="dot"></span>Running</span>';
+    img.onerror = () => document.getElementById('worker-status').innerHTML =
+        '<span class="badge badge-grey"><span class="dot"></span>Idle</span>';
+    // We just test with a HEAD-style approach via src
+    setTimeout(() => {
+        document.getElementById('worker-status').innerHTML =
+            '<span class="badge badge-grey"><span class="dot"></span>Idle (starts on use)</span>';
+    }, 800);
+});
+
+function loadSnapshot(index, container) {
+    const img       = container.querySelector('.snap-img');
+    const ph        = container.querySelector('.snap-placeholder');
+    const loading   = container.querySelector('.snap-loading');
+    loading.style.display = 'flex';
+    ph.style.display = 'none';
+
+    const url = '/api/cameras/' + index + '/snapshot?t=' + Date.now();
+    const testImg = new Image();
+    testImg.onload = function() {
+        img.src = url;
+        img.style.display = 'block';
+        loading.style.display = 'none';
+    };
+    testImg.onerror = function() {
+        loading.style.display = 'none';
+        ph.style.display = 'flex';
+        ph.innerHTML = '<span style="font-size:10px;color:var(--red);text-align:center;padding:4px">Not readable</span>';
+    };
+    testImg.src = url;
+}
+
+async function refreshCameras() {
+    const btn = document.getElementById('refresh-btn');
+    btn.disabled = true;
+    btn.textContent = 'Scanning…';
+    // Just reload the page — server re-scans on each load
+    window.location.reload();
+}
+</script>
+{% endblock %}

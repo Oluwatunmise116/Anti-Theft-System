@@ -1,0 +1,593 @@
+{% extends "base.html" %}
+{% block title %}Gate Exit — LicenseDB{% endblock %}
+{% block topbar_title %}Gate Exit{% endblock %}
+
+{% block content %}
+<style>
+@keyframes pulse-green {
+    0%,100% { box-shadow: 0 0 0 0 rgba(16,185,129,.5); }
+    50%      { box-shadow: 0 0 0 6px rgba(16,185,129,0); }
+}
+</style>
+
+<div class="page-header">
+    <div>
+        <div class="page-greeting">Gate <span>Exit</span></div>
+        <div class="page-sub">Verify face, fingerprint and colour — then grant or deny.</div>
+    </div>
+    <div class="page-actions">
+        <a href="{{ url_for('gate_trips') }}" class="btn btn-outline">Trip Log →</a>
+    </div>
+</div>
+
+<!-- PLATE LOOKUP -->
+<div class="card" style="margin-bottom:14px;">
+    <div class="card-title" style="margin-bottom:12px;">Vehicle Lookup</div>
+    <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;">
+        <div class="form-group" style="flex:1;min-width:180px;">
+            <label>Plate Number</label>
+            <input id="plate-input" type="text" placeholder="Detected automatically or enter manually…"
+                   style="text-transform:uppercase;font-family:'DM Mono',monospace;
+                          letter-spacing:2px;font-size:16px;"
+                   onkeydown="if(event.key==='Enter') lookupPlate()">
+        </div>
+        <button id="btn-scan-plate" class="btn btn-outline" onclick="scanPlate()" style="margin-bottom:1px;"
+                title="Open camera to scan vehicle plate">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"
+                 viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/>
+                <path d="M7 8h4m-4 4h8m-8 4h6"/></svg>
+            Scan Plate
+        </button>
+        <button id="btn-scan-now" class="btn btn-gold" onclick="runAnprScan()" style="display:none;margin-bottom:1px;">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"
+                 viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/>
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/></svg>
+            Scan Now
+        </button>
+        <button class="btn btn-gold" onclick="lookupPlate()" style="margin-bottom:1px;">
+            <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"
+                 viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            Look Up
+        </button>
+    </div>
+    <div id="anpr-status" style="margin-top:8px;font-size:12px;color:var(--text-mute);display:none;
+         font-family:'DM Mono',monospace;"></div>
+    <div id="lookup-msg" style="margin-top:4px;font-size:12.5px;color:var(--text-mute);display:none;"></div>
+</div>
+
+<!-- ENTRY RECORD (hidden until lookup) -->
+<div id="entry-record" style="display:none;margin-bottom:14px;">
+    <div style="display:grid;grid-template-columns:1fr 380px;gap:14px;align-items:start;">
+
+        <!-- LEFT: CAMERA PREVIEW + VERIFY BUTTON + LOG -->
+        <div style="display:flex;flex-direction:column;gap:14px;">
+
+            <!-- Camera preview (shown when stream is active) -->
+            <div id="cam-preview-card" class="card" style="display:none;padding:0;overflow:hidden;">
+                <div style="background:#000;aspect-ratio:16/9;position:relative;">
+                    <img id="cam-feed" src="" style="width:100%;height:100%;object-fit:contain;display:block;">
+                </div>
+                <div style="padding:8px 12px;font-size:11.5px;color:var(--text-mute);
+                            border-top:1px solid var(--border);" id="cam-hint">
+                    Camera live…
+                </div>
+            </div>
+
+            <div class="card">
+                <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <button id="btn-verify" class="btn btn-gold" onclick="startVerify()">
+                        <svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5"
+                             viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/>
+                            <path d="M9 12a5 5 0 0 0-5 5v1h16v-1a5 5 0 0 0-5-5"/></svg>
+                        Verify Face
+                    </button>
+                    <span id="verify-status" style="font-size:12px;color:var(--text-mute);">
+                        Look up a vehicle first.
+                    </span>
+                </div>
+            </div>
+
+            <!-- PROGRESS LOG -->
+            <div class="card" id="log-card" style="display:none;">
+                <div class="card-title" style="margin-bottom:10px;">Verification Log</div>
+                <div id="log-body" style="display:flex;flex-direction:column;gap:5px;
+                     font-size:12.5px;font-family:'DM Mono',monospace;
+                     max-height:200px;overflow-y:auto;"></div>
+            </div>
+        </div>
+
+        <!-- RIGHT: ENTRY INFO + PHOTOS + FP + RESULT -->
+        <div style="display:flex;flex-direction:column;gap:14px;">
+
+            <!-- ENTRY DETAILS -->
+            <div class="card">
+                <div class="card-title" style="margin-bottom:12px;">Entry Record</div>
+                <div style="display:flex;flex-direction:column;gap:10px;">
+                    <div style="display:flex;gap:10px;">
+                        <div style="flex:1;">
+                            <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;
+                                 letter-spacing:1.2px;margin-bottom:3px;">Plate</div>
+                            <div id="rec-plate" class="mono" style="font-size:18px;font-weight:700;letter-spacing:2px;"></div>
+                        </div>
+                        <div style="flex:1;">
+                            <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;
+                                 letter-spacing:1.2px;margin-bottom:3px;">Entry Time</div>
+                            <div id="rec-time" style="font-size:13px;color:var(--text-dim);"></div>
+                        </div>
+                    </div>
+                    <div>
+                        <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;
+                             letter-spacing:1.2px;margin-bottom:4px;">FP Enrolled</div>
+                        <span id="rec-fp-badge" class="badge badge-grey">
+                            <span class="dot"></span>—
+                        </span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- PHOTO COMPARISON -->
+            <div class="card">
+                <div class="card-title" style="margin-bottom:10px;">Face Comparison</div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <div>
+                        <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;
+                             letter-spacing:1.2px;margin-bottom:5px;">Entry Face</div>
+                        <div class="photo-box" style="width:100%;height:130px;">
+                            <img id="entry-face" src="" style="display:none;width:100%;height:100%;object-fit:cover;">
+                            <div id="entry-face-ph" class="photo-placeholder">
+                                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"
+                                     viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/>
+                                    <path d="M9 12a5 5 0 0 0-5 5v1h16v-1a5 5 0 0 0-5-5"/></svg>
+                                <span style="font-size:10px;">Entry photo</span>
+                            </div>
+                        </div>
+                    </div>
+                    <div>
+                        <div style="font-size:10px;color:var(--text-mute);text-transform:uppercase;
+                             letter-spacing:1.2px;margin-bottom:5px;">Live Capture</div>
+                        <div class="photo-box" style="width:100%;height:130px;">
+                            <img id="exit-face" src="" style="display:none;width:100%;height:100%;object-fit:cover;">
+                            <div id="exit-face-ph" class="photo-placeholder">
+                                <svg width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.5"
+                                     viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/>
+                                    <path d="M9 12a5 5 0 0 0-5 5v1h16v-1a5 5 0 0 0-5-5"/></svg>
+                                <span style="font-size:10px;">Live capture</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- FINGERPRINT VERIFY (shown only if FP enrolled) -->
+            <div class="card" id="fp-verify-card" style="display:none;">
+                <div class="card-title" style="margin-bottom:10px;">Fingerprint Verification</div>
+                <div id="fp-verify-log" style="font-size:11.5px;font-family:'DM Mono',monospace;
+                     color:var(--text-dim);min-height:18px;margin-bottom:10px;"></div>
+                <div style="display:flex;gap:8px;align-items:center;">
+                    <button id="btn-fp-verify" class="btn btn-outline btn-sm" onclick="startFPVerify()">
+                        <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"
+                             viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                        Scan Fingerprint
+                    </button>
+                    <button id="btn-fp-verify-cancel" class="btn btn-ghost btn-sm"
+                            style="display:none;" onclick="cancelFPVerify()">Cancel</button>
+                    <span id="fp-verify-status" class="badge badge-grey" style="font-size:11px;">
+                        <span class="dot"></span>Not scanned
+                    </span>
+                </div>
+            </div>
+
+            <!-- RESULT + CONFIRM -->
+            <div id="result-card" class="card" style="display:none;">
+                <div class="card-title" style="margin-bottom:12px;">Verification Result</div>
+                <div style="display:flex;flex-direction:column;gap:8px;margin-bottom:14px;">
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <span style="font-size:12px;color:var(--text-dim);">Face Match</span>
+                        <span id="res-face" class="badge"></span>
+                    </div>
+                    <div style="display:flex;justify-content:space-between;align-items:center;">
+                        <span style="font-size:12px;color:var(--text-dim);">Confidence</span>
+                        <span id="res-conf" class="mono" style="font-size:13px;"></span>
+                    </div>
+                    <div id="res-fp-row" style="display:none;justify-content:space-between;align-items:center;">
+                        <span style="font-size:12px;color:var(--text-dim);">Fingerprint</span>
+                        <span id="res-fp" class="badge"></span>
+                    </div>
+                    <div id="res-alert" style="display:none;padding:8px 12px;border-radius:8px;
+                         background:var(--red-wash);border:1px solid rgba(239,68,68,.2);
+                         color:var(--red);font-size:12px;margin-top:4px;"></div>
+                </div>
+                <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px;">
+                    <button id="btn-grant" class="btn btn-gold" onclick="confirmExit('GRANTED')">
+                        ✓ Grant Exit
+                    </button>
+                    <button id="btn-deny" class="btn btn-red" onclick="confirmExit('DENIED')">
+                        ✕ Deny Exit
+                    </button>
+                </div>
+            </div>
+
+        </div>
+    </div>
+</div>
+
+<script>
+let currentTripId    = null;
+let hasFP            = false;
+let lastVerifyResult = {};
+let scanBusy         = false;
+
+// ── CAMERA STREAM HELPERS (EXIT) ─────────────────────────────────────────────
+
+function startExitStream(hint) {
+    const card = document.getElementById('cam-preview-card');
+    const feed = document.getElementById('cam-feed');
+    document.getElementById('cam-hint').textContent = hint || 'Camera live…';
+    feed.src = '/gate/video-feed';
+    card.style.display = '';
+}
+
+function stopExitStream() {
+    const feed = document.getElementById('cam-feed');
+    feed.src = '';
+    document.getElementById('cam-preview-card').style.display = 'none';
+}
+
+// ── MANUAL PLATE SCAN (ANPR) ──────────────────────────────────────────────────
+
+function scanPlate() {
+    if (scanBusy) return;
+    const st = document.getElementById('anpr-status');
+    // Start camera preview and show "Scan Now" button
+    startExitStream('Position the vehicle plate in frame, then click Scan Now.');
+    document.getElementById('btn-scan-now').style.display = '';
+    document.getElementById('btn-scan-plate').style.display = 'none';
+    st.style.display  = '';
+    st.style.color    = 'var(--text-mute)';
+    st.textContent    = '→ Camera live — align plate and click Scan Now';
+}
+
+function runAnprScan() {
+    if (scanBusy) return;
+    scanBusy = true;
+    const st = document.getElementById('anpr-status');
+    document.getElementById('btn-scan-now').disabled = true;
+    st.textContent = '→ Scanning…';
+    stopExitStream();  // disconnect MJPEG; camera worker stays running for snap
+
+    fetch('/gate/detect/anpr-now', {method: 'POST'})
+        .then(r => r.json())
+        .then(d => {
+            if (d.plate) {
+                st.style.color = 'var(--green)';
+                st.textContent = '✓ Plate detected: ' + d.plate;
+                document.getElementById('plate-input').value = d.plate;
+                document.getElementById('btn-scan-now').style.display = 'none';
+                document.getElementById('btn-scan-plate').style.display = '';
+                lookupPlate();
+            } else {
+                st.style.color = 'var(--amber)';
+                st.textContent = '⚠ No plate detected — try again or enter manually';
+                document.getElementById('btn-scan-now').disabled = false;
+                startExitStream('Position the vehicle plate and click Scan Now.');
+            }
+        })
+        .catch(() => {
+            st.style.color = 'var(--red)';
+            st.textContent = '✕ Scan failed — check camera';
+            document.getElementById('btn-scan-now').disabled = false;
+        })
+        .finally(() => {
+            scanBusy = false;
+            document.getElementById('btn-scan-plate').disabled = false;
+        });
+}
+
+function lookupPlate() {
+    const plate = document.getElementById('plate-input').value.trim().toUpperCase();
+    if (!plate) return;
+    const msg = document.getElementById('lookup-msg');
+    msg.style.display = ''; msg.textContent = 'Looking up…'; msg.style.color = 'var(--text-mute)';
+
+    fetch('/gate/exit/lookup?plate=' + encodeURIComponent(plate))
+        .then(r => r.json())
+        .then(d => {
+            if (!d.found) {
+                msg.textContent = `No open trip found for plate "${plate}".`;
+                msg.style.color = 'var(--red)';
+                document.getElementById('entry-record').style.display = 'none';
+                return;
+            }
+            msg.style.display = 'none';
+            currentTripId = d.trip_id;
+            hasFP = !!d.has_fingerprint;
+            lastVerifyResult = {};
+
+            document.getElementById('rec-plate').textContent = d.plate;
+            document.getElementById('rec-time').textContent =
+                d.entry_time ? d.entry_time.replace('T', ' ').slice(0, 16) : '—';
+
+            const fpBadge = document.getElementById('rec-fp-badge');
+            if (hasFP) {
+                fpBadge.className = 'badge badge-green';
+                fpBadge.innerHTML = '<span class="dot"></span>Yes';
+            } else {
+                fpBadge.className = 'badge badge-grey';
+                fpBadge.innerHTML = '<span class="dot"></span>No';
+            }
+
+            if (d.face_photo_url) {
+                const img = document.getElementById('entry-face');
+                img.src = d.face_photo_url; img.style.display = '';
+                document.getElementById('entry-face-ph').style.display = 'none';
+            } else {
+                document.getElementById('entry-face').style.display = 'none';
+                document.getElementById('entry-face-ph').style.display = '';
+            }
+
+            // Show FP card only if fingerprint was enrolled
+            document.getElementById('fp-verify-card').style.display = hasFP ? '' : 'none';
+            document.getElementById('fp-verify-log').textContent = '';
+            document.getElementById('fp-verify-status').className = 'badge badge-grey';
+            document.getElementById('fp-verify-status').innerHTML = '<span class="dot"></span>Not scanned';
+            document.getElementById('btn-fp-verify').disabled = true;  // enabled after face verify
+
+            // Reset exit face and result
+            document.getElementById('exit-face').style.display = 'none';
+            document.getElementById('exit-face-ph').style.display = '';
+            document.getElementById('result-card').style.display = 'none';
+            document.getElementById('log-card').style.display = 'none';
+            document.getElementById('log-body').innerHTML = '';
+            document.getElementById('btn-verify').disabled = false;
+            document.getElementById('verify-status').textContent = 'Position driver in frame, then verify.';
+
+            document.getElementById('entry-record').style.display = '';
+            document.getElementById('verify-status').textContent = 'Position driver in front of camera, then verify.';
+        });
+}
+
+
+function log(type, text) {
+    document.getElementById('log-card').style.display = '';
+    const body = document.getElementById('log-body');
+    const colors = {step:'var(--text-dim)',ok:'var(--green)',warning:'var(--amber)',
+                    error:'var(--red)',success:'var(--green)',denied:'var(--red)',
+                    info:'var(--text-mute)',waiting:'var(--text-mute)',notfound:'var(--red)'};
+    const icons  = {step:'→',ok:'✓',warning:'⚠',error:'✕',success:'✓',
+                    denied:'✕',info:'·',waiting:'…',notfound:'✕'};
+    const row = document.createElement('div');
+    row.style.cssText = `color:${colors[type]||'var(--text-dim)'};display:flex;gap:6px;`;
+    row.innerHTML = `<span style="opacity:.5">${icons[type]||'·'}</span><span>${text}</span>`;
+    body.appendChild(row);
+    body.scrollTop = body.scrollHeight;
+}
+
+// ── FACE VERIFY ───────────────────────────────────────────────────────────────
+
+function startVerify() {
+    if (!currentTripId) return;
+    document.getElementById('btn-verify').disabled = true;
+    document.getElementById('verify-status').textContent = 'Position driver in frame — capturing…';
+    document.getElementById('result-card').style.display = 'none';
+    document.getElementById('log-body').innerHTML = '';
+    startExitStream('Position driver\'s face in frame — auto-captures in ~1 second.');
+
+    fetch('/gate/exit/verify/start', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({trip_id: currentTripId})
+    }).then(r => r.json()).then(d => {
+        if (d.error) { log('error', d.error); stopExitStream(); resetVerify(); return; }
+
+        const es = new EventSource('/gate/exit/verify/stream/' + currentTripId);
+        es.onmessage = e => {
+            const msg = JSON.parse(e.data);
+            log(msg.type, msg.text);
+
+            if (msg.distance !== undefined) {
+                lastVerifyResult.face_distance = msg.distance;
+                lastVerifyResult.confidence    = msg.confidence;
+                lastVerifyResult.face_match    = msg.distance <= 0.5;
+            }
+
+            if (msg.type === 'success' || msg.type === 'denied') {
+                stopExitStream();  // face captured — stop live feed
+                lastVerifyResult.decision = msg.decision;
+
+                fetch('/gate/exit/last-result/' + currentTripId)
+                    .then(r => r.json()).then(r => {
+                        if (r.exit_photo_url) {
+                            const img = document.getElementById('exit-face');
+                            img.src = r.exit_photo_url; img.style.display = '';
+                            document.getElementById('exit-face-ph').style.display = 'none';
+                            lastVerifyResult.exit_photo_path = r.exit_photo_path;
+                        }
+                    });
+
+                document.getElementById('verify-status').textContent =
+                    msg.decision === 'GRANTED' ? 'Face check passed ✓' : 'Face check FAILED';
+
+                if (hasFP) {
+                    // Enable FP scan — show result after both checks
+                    document.getElementById('btn-fp-verify').disabled = false;
+                    document.getElementById('fp-verify-log').textContent =
+                        'Face verified. Scan fingerprint to continue.';
+                } else {
+                    // No FP — show result immediately
+                    showResult(lastVerifyResult);
+                }
+
+                resetVerify();
+                es.close();
+            }
+            if (msg.type === 'error') {
+                stopExitStream(); resetVerify(); es.close();
+            }
+        };
+        es.onerror = () => { log('error', 'Stream disconnected.'); stopExitStream(); resetVerify(); es.close(); };
+    });
+}
+
+function resetVerify() {
+    document.getElementById('btn-verify').disabled = false;
+}
+
+// ── FINGERPRINT VERIFY (EXIT) ─────────────────────────────────────────────────
+
+function startFPVerify() {
+    if (!currentTripId) return;
+    document.getElementById('btn-fp-verify').disabled = true;
+    document.getElementById('btn-fp-verify-cancel').style.display = '';
+    document.getElementById('fp-verify-log').textContent = 'Starting…';
+
+    fetch('/gate/exit/fp/start', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({trip_id: currentTripId})
+    }).then(r => r.json()).then(d => {
+        if (d.error) {
+            document.getElementById('fp-verify-log').textContent = d.error;
+            document.getElementById('btn-fp-verify').disabled = false;
+            document.getElementById('btn-fp-verify-cancel').style.display = 'none';
+            return;
+        }
+        if (d.no_fp) {
+            document.getElementById('fp-verify-log').textContent = d.msg;
+            document.getElementById('btn-fp-verify-cancel').style.display = 'none';
+            lastVerifyResult.fp_match = null;
+            showResult(lastVerifyResult);
+            return;
+        }
+
+        const es = new EventSource('/gate/exit/fp/stream/' + currentTripId);
+        es.onmessage = e => {
+            const msg = JSON.parse(e.data);
+            log(msg.type, msg.text);
+            document.getElementById('fp-verify-log').textContent = msg.text;
+
+            if (msg.type === 'success') {
+                lastVerifyResult.fp_match = true;
+                lastVerifyResult.fp_score = msg.score;
+                const st = document.getElementById('fp-verify-status');
+                st.className = 'badge badge-green';
+                st.innerHTML = '<span class="dot"></span>MATCH';
+                document.getElementById('btn-fp-verify-cancel').style.display = 'none';
+                showResult(lastVerifyResult);
+                es.close();
+            }
+            if (msg.type === 'notfound') {
+                lastVerifyResult.fp_match = false;
+                lastVerifyResult.fp_score = msg.score;
+                const st = document.getElementById('fp-verify-status');
+                st.className = 'badge badge-red';
+                st.innerHTML = '<span class="dot"></span>MISMATCH';
+                document.getElementById('btn-fp-verify').disabled = false;
+                document.getElementById('btn-fp-verify-cancel').style.display = 'none';
+                showResult(lastVerifyResult);
+                es.close();
+            }
+            if (msg.type === 'error') {
+                document.getElementById('btn-fp-verify').disabled = false;
+                document.getElementById('btn-fp-verify-cancel').style.display = 'none';
+                es.close();
+            }
+        };
+        es.onerror = () => {
+            document.getElementById('btn-fp-verify').disabled = false;
+            document.getElementById('btn-fp-verify-cancel').style.display = 'none';
+            es.close();
+        };
+    });
+}
+
+function cancelFPVerify() {
+    fetch('/gate/exit/fp/cancel', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({trip_id: currentTripId})
+    });
+    document.getElementById('btn-fp-verify').disabled = false;
+    document.getElementById('btn-fp-verify-cancel').style.display = 'none';
+}
+
+// ── RESULT ────────────────────────────────────────────────────────────────────
+
+function showResult(r) {
+    const card = document.getElementById('result-card');
+    card.style.display = '';
+
+    // Face
+    const faceEl = document.getElementById('res-face');
+    if (r.face_match) {
+        faceEl.className = 'badge badge-green';
+        faceEl.innerHTML = '<span class="dot"></span>MATCH';
+    } else {
+        faceEl.className = 'badge badge-red';
+        faceEl.innerHTML = '<span class="dot"></span>MISMATCH';
+    }
+    document.getElementById('res-conf').textContent =
+        r.confidence !== undefined ? r.confidence + '%' : '—';
+
+    // Fingerprint row
+    const fpRow = document.getElementById('res-fp-row');
+    const fpEl  = document.getElementById('res-fp');
+    if (r.fp_match === true) {
+        fpRow.style.display = 'flex';
+        fpEl.className = 'badge badge-green';
+        fpEl.innerHTML = '<span class="dot"></span>MATCH';
+    } else if (r.fp_match === false) {
+        fpRow.style.display = 'flex';
+        fpEl.className = 'badge badge-red';
+        fpEl.innerHTML = '<span class="dot"></span>MISMATCH';
+    } else {
+        fpRow.style.display = 'none';
+    }
+
+    // Alert
+    const alertEl = document.getElementById('res-alert');
+    if (!r.face_match && r.fp_match === false) {
+        alertEl.style.display = '';
+        alertEl.textContent = 'ALERT: Face AND fingerprint mismatch — access denied';
+    } else {
+        alertEl.style.display = 'none';
+    }
+
+    // Button emphasis: GRANTED only if face passes (FP failure is advisory but shown)
+    const overallPass = !!r.face_match;
+    document.getElementById('btn-grant').style.opacity = overallPass ? '1' : '0.6';
+    document.getElementById('btn-deny').style.opacity  = overallPass ? '0.6' : '1';
+}
+
+// ── CONFIRM EXIT ──────────────────────────────────────────────────────────────
+
+function confirmExit(decision) {
+    if (!currentTripId) return;
+    document.getElementById('btn-grant').disabled = true;
+    document.getElementById('btn-deny').disabled  = true;
+
+    fetch('/gate/exit/confirm', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            trip_id:         currentTripId,
+            decision:        decision,
+            face_distance:   lastVerifyResult.face_distance,
+            exit_photo_path: lastVerifyResult.exit_photo_path || null,
+        })
+    }).then(r => r.json()).then(d => {
+        if (d.ok) {
+            window.location.href = '/gate/trips';
+        } else {
+            alert(d.error || 'Failed.');
+            document.getElementById('btn-grant').disabled = false;
+            document.getElementById('btn-deny').disabled  = false;
+        }
+    });
+}
+
+// Auto-lookup if plate in URL
+(function(){
+    const p = new URLSearchParams(window.location.search).get('plate');
+    if (p) {
+        document.getElementById('plate-input').value = p;
+        lookupPlate();
+    }
+})();
+</script>
+{% endblock %}

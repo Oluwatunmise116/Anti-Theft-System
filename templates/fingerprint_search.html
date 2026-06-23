@@ -1,0 +1,325 @@
+{% extends "base.html" %}
+{% block title %}Fingerprint Search — LicenseDB{% endblock %}
+{% block topbar_title %}FINGERPRINT SEARCH{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <div class="page-title">Identify <span>by Fingerprint</span></div>
+        <div class="text-dim" style="font-size:13px;margin-top:4px">Place a finger on the sensor to identify the holder</div>
+    </div>
+</div>
+
+<div style="display:grid;grid-template-columns:480px 1fr;gap:24px;align-items:start">
+
+    <!-- LEFT — Scanner Panel -->
+    <div class="card" style="text-align:center">
+        <div class="card-title" style="text-align:left">SENSOR SCANNER</div>
+
+        <!-- Fingerprint animation -->
+        <div style="position:relative;display:inline-block;margin:16px 0 24px">
+            <div id="scan-ring" style="width:160px;height:160px;border-radius:50%;border:3px solid var(--border);display:flex;align-items:center;justify-content:center;margin:0 auto;position:relative;transition:border-color 0.4s">
+                <div id="scan-pulse" style="position:absolute;inset:0;border-radius:50%;border:3px solid transparent;transition:all 0.4s"></div>
+                <div id="fp-icon" style="font-size:72px;transition:all 0.4s">🫆</div>
+            </div>
+        </div>
+
+        <div id="scan-status" style="font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:3px;color:var(--white-dim);margin-bottom:8px">READY</div>
+        <div id="scan-sub" style="font-size:13px;color:var(--white-dim);margin-bottom:24px;min-height:20px">Press Scan to begin identification</div>
+
+        <!-- Progress bar -->
+        <div style="background:var(--navy-light);border-radius:4px;height:4px;margin-bottom:24px;overflow:hidden">
+            <div id="progress-bar" style="height:100%;width:0%;background:var(--gold);transition:width 0.4s ease;border-radius:4px"></div>
+        </div>
+
+        <!-- Action buttons -->
+        <div style="display:flex;gap:10px;justify-content:center">
+            <button id="scan-btn" onclick="startSearch()" class="btn btn-gold" style="min-width:140px;justify-content:center">
+                ⬡ Scan Fingerprint
+            </button>
+            <button id="cancel-btn" onclick="cancelSearch()" class="btn btn-outline" style="display:none;justify-content:center">
+                Cancel
+            </button>
+        </div>
+
+        <!-- Log -->
+        <div id="progress-log" style="margin-top:20px;background:var(--navy);border:1px solid var(--border);border-radius:8px;padding:12px;min-height:100px;max-height:160px;overflow-y:auto;font-family:'DM Mono',monospace;font-size:11px;text-align:left">
+            <div style="color:var(--white-dim)">Awaiting scan…</div>
+        </div>
+    </div>
+
+    <!-- RIGHT — Result Panel -->
+    <div id="result-panel">
+
+        <!-- Default state -->
+        <div id="no-result" class="card" style="text-align:center;padding:60px 40px">
+            <div style="font-size:56px;margin-bottom:16px;opacity:0.3">🔍</div>
+            <div style="font-family:'Bebas Neue',sans-serif;font-size:16px;letter-spacing:2px;color:var(--white-dim)">NO SCAN YET</div>
+            <div style="font-size:13px;color:var(--white-dim);margin-top:8px">Scan a fingerprint to see the holder record here</div>
+        </div>
+
+        <!-- Not found state -->
+        <div id="not-found" class="card" style="text-align:center;padding:60px 40px;display:none;border-color:rgba(224,92,92,0.4)">
+            <div style="font-size:56px;margin-bottom:16px">❌</div>
+            <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:2px;color:var(--red)">NO MATCH FOUND</div>
+            <div style="font-size:13px;color:var(--white-dim);margin-top:8px">This fingerprint is not enrolled in the database</div>
+        </div>
+
+        <!-- Match result -->
+        <div id="match-result" style="display:none">
+            <div class="card" style="border-color:rgba(76,175,130,0.5);margin-bottom:16px">
+                <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
+                    <div style="font-size:32px">✅</div>
+                    <div>
+                        <div style="font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;color:var(--green)">MATCH FOUND</div>
+                        <div style="font-size:12px;color:var(--white-dim);margin-top:2px">Confidence score: <span id="match-score" class="mono text-gold">—</span></div>
+                    </div>
+                    <a id="view-record-btn" href="#" class="btn btn-gold" style="margin-left:auto">View Full Record →</a>
+                </div>
+
+                <!-- Holder Summary -->
+                <div style="display:grid;grid-template-columns:80px 1fr;gap:16px;align-items:start">
+                    <div id="result-photo" style="width:80px;height:100px;background:var(--navy-light);border:1px solid var(--border);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:32px;overflow:hidden">👤</div>
+                    <div>
+                        <div style="font-family:'Bebas Neue',sans-serif;font-size:24px;letter-spacing:2px;color:var(--white)" id="result-name">—</div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:12px">
+                            <div>
+                                <div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold-dim)">Holder ID</div>
+                                <div class="mono" id="result-id" style="color:var(--gold);font-size:14px">—</div>
+                            </div>
+                            <div>
+                                <div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold-dim)">License No.</div>
+                                <div class="mono" id="result-license" style="font-size:14px">—</div>
+                            </div>
+                            <div>
+                                <div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold-dim)">Date of Birth</div>
+                                <div class="mono" id="result-dob" style="font-size:14px">—</div>
+                            </div>
+                            <div>
+                                <div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold-dim)">Blood Group</div>
+                                <div id="result-bg" style="font-size:14px">—</div>
+                            </div>
+                            <div>
+                                <div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold-dim)">License Class</div>
+                                <div id="result-class" style="font-size:14px">—</div>
+                            </div>
+                            <div>
+                                <div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold-dim)">Expiry Date</div>
+                                <div class="mono" id="result-expiry" style="font-size:14px">—</div>
+                            </div>
+                            <div style="grid-column:1/-1">
+                                <div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--gold-dim)">Status</div>
+                                <div id="result-status">—</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+
+<script>
+let eventSource = null;
+
+function addLog(text, type) {
+    type = type || 'normal';
+    const log = document.getElementById('progress-log');
+    const line = document.createElement('div');
+    const colors = {normal:'var(--white)',dim:'var(--white-dim)',ok:'var(--green)',error:'var(--red)',success:'var(--gold)',step:'#7eb8f7',waiting:'#888',warning:'#e0984a',info:'var(--white-dim)',notfound:'var(--red)'};
+    const prefixes = {ok:'✓ ',error:'✕ ',success:'★ ',step:'→ ',waiting:'⋯ ',warning:'⚠ ',notfound:'✕ '};
+    line.style.color = colors[type] || colors.normal;
+    line.style.marginBottom = '3px';
+    line.textContent = (prefixes[type] || '') + text;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+}
+
+function clearLog() { document.getElementById('progress-log').innerHTML = ''; }
+function setStatus(t, sub) {
+    document.getElementById('scan-status').textContent = t;
+    if (sub !== undefined) document.getElementById('scan-sub').textContent = sub;
+}
+function setIcon(i) { document.getElementById('fp-icon').textContent = i; }
+function setProgress(pct, color) {
+    const bar = document.getElementById('progress-bar');
+    bar.style.width = pct + '%';
+    bar.style.background = color || 'var(--gold)';
+}
+function setRingColor(color) {
+    document.getElementById('scan-ring').style.borderColor = color;
+}
+
+function showPanel(name) {
+    ['no-result','not-found','match-result'].forEach(id => {
+        document.getElementById(id).style.display = id === name ? (name === 'match-result' ? 'block' : 'flex') : 'none';
+    });
+    if (name === 'no-result') document.getElementById('no-result').style.display = 'block';
+}
+
+function startSearch() {
+    const btn = document.getElementById('scan-btn');
+    btn.disabled = true;
+    btn.textContent = '⋯ Scanning…';
+    document.getElementById('cancel-btn').style.display = 'flex';
+    clearLog();
+    setStatus('SCANNING', 'Place finger on sensor…');
+    setIcon('🫆');
+    setProgress(5);
+    setRingColor('var(--gold)');
+    showPanel('no-result');
+
+    fetch('/fingerprint-search/start', {method: 'POST'})
+        .then(r => r.json())
+        .then(data => {
+            if (data.error) {
+                addLog(data.error, 'error');
+                resetScanner();
+                return;
+            }
+            listenToStream();
+        })
+        .catch(err => {
+            addLog('Failed to connect: ' + err, 'error');
+            resetScanner();
+        });
+}
+
+function listenToStream() {
+    if (eventSource) eventSource.close();
+    eventSource = new EventSource('/fingerprint-search/stream');
+
+    eventSource.onmessage = function(e) {
+        const msg = JSON.parse(e.data);
+
+        if (msg.type === 'waiting') {
+            setIcon('⏳');
+            document.getElementById('scan-sub').textContent = 'Waiting for finger…';
+            return; // Don't flood log with waiting messages
+        }
+
+        addLog(msg.text, msg.type);
+
+        if (msg.type === 'step') {
+            setProgress(30);
+            setStatus('SCANNING', msg.text);
+            setIcon('🫆');
+        } else if (msg.type === 'ok') {
+            setProgress(55);
+            setIcon('🫆');
+        } else if (msg.type === 'info') {
+            setProgress(p => Math.min(p + 2, 90));
+        } else if (msg.type === 'success') {
+            eventSource.close(); eventSource = null;
+            setProgress(100, 'var(--green)');
+            setIcon('✅');
+            setStatus('MATCH FOUND', msg.text);
+            setRingColor('var(--green)');
+
+            // Extract holder_id from message — fetch the full record
+            const idMatch = msg.text.match(/holder_id:\s*(\d+)/);
+            fetchAndShowResult();
+
+        } else if (msg.type === 'notfound') {
+            eventSource.close(); eventSource = null;
+            setProgress(100, 'var(--red)');
+            setIcon('❌');
+            setStatus('NOT FOUND', 'No matching fingerprint in database');
+            setRingColor('var(--red)');
+            showPanel('not-found');
+            document.getElementById('not-found').style.display = 'block';
+            resetScanButton();
+
+        } else if (msg.type === 'error') {
+            eventSource.close(); eventSource = null;
+            setIcon('❌');
+            setStatus('ERROR', msg.text);
+            setRingColor('var(--red)');
+            resetScanButton();
+        }
+    };
+
+    eventSource.onerror = function() {
+        addLog('Connection lost.', 'error');
+        eventSource.close(); eventSource = null;
+        resetScanner();
+    };
+}
+
+// After success message, fetch the holder record from the API
+let lastMatchId = null;
+
+function fetchAndShowResult() {
+    // Re-read the log to extract name — instead just poll the last match
+    // We need to get the holder_id from the stream; use a dedicated endpoint
+    fetch('/fingerprint-search/last-match')
+        .then(r => r.json())
+        .then(data => {
+            if (data.holder_id) {
+                lastMatchId = data.holder_id;
+                showMatchResult(data);
+            }
+        })
+        .catch(() => {});
+    resetScanButton();
+}
+
+function resetScanButton() {
+    const btn = document.getElementById('scan-btn');
+    btn.disabled = false;
+    btn.textContent = '⬡ Scan Again';
+    document.getElementById('cancel-btn').style.display = 'none';
+}
+
+function resetScanner() {
+    setProgress(0);
+    setIcon('🫆');
+    setStatus('READY', 'Press Scan to begin identification');
+    setRingColor('var(--border)');
+    resetScanButton();
+}
+
+function cancelSearch() {
+    fetch('/fingerprint-search/cancel', {method: 'POST'});
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    resetScanner();
+    addLog('Scan cancelled.', 'dim');
+}
+
+function showMatchResult(data) {
+    document.getElementById('result-name').textContent = data.name || '—';
+    document.getElementById('result-id').textContent = '#' + data.holder_id;
+    document.getElementById('result-license').textContent = data.license_number || '—';
+    document.getElementById('result-dob').textContent = data.date_of_birth || '—';
+    document.getElementById('result-bg').textContent = data.blood_group || '—';
+    document.getElementById('result-class').textContent = data.license_class ? 'Class ' + data.license_class : '—';
+    document.getElementById('match-score').textContent = data.score || '—';
+
+    const expiry = data.expiry_date || '';
+    const today = new Date().toISOString().split('T')[0];
+    const expired = expiry && expiry < today;
+    document.getElementById('result-expiry').textContent = expiry || '—';
+    document.getElementById('result-expiry').style.color = expired ? 'var(--red)' : 'var(--green)';
+
+    const statusEl = document.getElementById('result-status');
+    statusEl.innerHTML = expired
+        ? '<span class="badge badge-red">EXPIRED</span>'
+        : expiry
+            ? '<span class="badge badge-green">ACTIVE</span>'
+            : '<span class="badge badge-grey">NO LICENSE</span>';
+
+    if (data.photo_path) {
+        const photo = document.getElementById('result-photo');
+        photo.innerHTML = `<img src="/${data.photo_path}" style="width:100%;height:100%;object-fit:cover">`;
+    }
+
+    document.getElementById('view-record-btn').href = '/holders/' + data.holder_id;
+    showPanel('match-result');
+}
+
+// Handle progress percentage update via closure
+const origSetProgress = setProgress;
+</script>
+{% endblock %}

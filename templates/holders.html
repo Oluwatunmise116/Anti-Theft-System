@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Holders — LicenseDB{% endblock %}
+{% block topbar_title %}ALL HOLDERS{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <div class="eyebrow">Directory</div>
+        <div class="page-title">License <em>Holders</em></div>
+        <div class="page-sub">
+            {{ holders|length }} record{{ 's' if holders|length != 1 }}
+            {% if query %} · Search: "<strong>{{ query }}</strong>"{% endif %}
+        </div>
+    </div>
+    <a href="{{ url_for('add_holder') }}" class="btn btn-gold">+ Register New Holder</a>
+</div>
+
+<div class="card">
+    {% if holders %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Photo</th>
+                    <th>ID</th>
+                    <th>Full Name</th>
+                    <th>DOB</th>
+                    <th>License No.</th>
+                    <th>Class</th>
+                    <th>Expiry</th>
+                    <th>FP</th>
+                    <th>Status</th>
+                    <th>Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for h in holders %}
+                {% set expired = h.expiry_date and h.expiry_date < now %}
+                <tr>
+                    <td>
+                        {% if h.photo_path %}
+                            <img src="{{ url_for('serve_photo', filename=h.photo_path) }}" style="width:36px;height:44px;object-fit:cover;border-radius:5px;border:1px solid var(--border)">
+                        {% else %}
+                            <div class="avatar-sm" style="width:36px;height:44px;border-radius:5px">{{ h.first_name[0] }}{{ h.surname[0] }}</div>
+                        {% endif %}
+                    </td>
+                    <td><span class="mono text-gold">#{{ h.id }}</span></td>
+                    <td><strong>{{ h.surname }}, {{ h.first_name }}</strong></td>
+                    <td><span class="mono" style="font-size:12px">{{ h.date_of_birth }}</span></td>
+                    <td><span class="mono">{{ h.license_number or '—' }}</span></td>
+                    <td>
+                        {% if h.license_class %}<span class="badge badge-gold">{{ h.license_class }}</span>{% else %}—{% endif %}
+                    </td>
+                    <td>
+                        {% if h.expiry_date %}
+                            <span class="mono {% if expired %}text-red{% endif %}" style="font-size:12px">{{ h.expiry_date }}</span>
+                        {% else %}—{% endif %}
+                    </td>
+                    <td>
+                        {% if h.has_fingerprint %}
+                            <span style="color:var(--green);font-size:16px" title="Fingerprint Enrolled">✓</span>
+                        {% else %}
+                            <span style="color:var(--red);font-size:16px" title="No Fingerprint">✕</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if expired %}
+                            <span class="badge badge-red"><span class="dot"></span>Expired</span>
+                        {% elif h.expiry_date %}
+                            <span class="badge badge-green"><span class="dot"></span>Active</span>
+                        {% else %}
+                            <span class="badge badge-grey"><span class="dot"></span>No License</span>
+                        {% endif %}
+                    </td>
+                    <td>
+                        <div class="flex gap-2">
+                            <a href="{{ url_for('view_holder', holder_id=h.id) }}" class="btn btn-outline btn-sm">View</a>
+                            <a href="{{ url_for('edit_holder', holder_id=h.id) }}" class="btn btn-outline btn-sm">Edit</a>
+                        </div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <svg width="48" height="48" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
+        {% if query %}
+            <p>No results for "<strong>{{ query }}</strong>". <a href="{{ url_for('holders') }}" class="text-gold">Clear search →</a></p>
+        {% else %}
+            <p>No holders registered yet. <a href="{{ url_for('add_holder') }}" class="text-gold">Register the first one →</a></p>
+        {% endif %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}

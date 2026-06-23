@@ -1,0 +1,370 @@
+{% extends "base.html" %}
+{% block title %}Face Recognition Search — LicenseDB{% endblock %}
+{% block topbar_title %}FACE RECOGNITION SEARCH{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <div>
+        <div class="page-title">Identify <span>by Face</span></div>
+        <div class="text-dim" style="font-size:13px;margin-top:4px">Look at the camera to identify a holder using their passport photo</div>
+    </div>
+</div>
+
+<div style="display:grid;grid-template-columns:500px 1fr;gap:24px;align-items:start">
+
+    <!-- LEFT — Camera Panel -->
+    <div class="card">
+        <div class="card-title">CAMERA SCANNER</div>
+
+        <!-- Video feed / placeholder toggle -->
+        <div style="position:relative;width:100%;border-radius:8px;overflow:hidden;background:#000;margin-bottom:16px">
+
+            <!-- Placeholder shown before scanning -->
+            <div id="cam-placeholder" style="width:100%;height:300px;display:flex;flex-direction:column;align-items:center;justify-content:center;background:var(--bg);border:2px dashed var(--border);border-radius:8px;gap:10px">
+                <span style="font-size:56px;opacity:0.4">📷</span>
+                <span style="font-size:13px;color:var(--text-dim)">Camera feed will appear here when scanning</span>
+            </div>
+
+            <!-- Live video feed (hidden until scan starts) -->
+            <img id="video-feed"
+                 src=""
+                 style="display:none;width:100%;height:300px;object-fit:cover;border-radius:8px"
+                 alt="Camera feed">
+
+            <!-- Overlay badges on video -->
+            <div id="video-overlay" style="display:none;position:absolute;top:10px;left:10px;right:10px;pointer-events:none">
+                <div style="display:flex;justify-content:space-between;align-items:flex-start">
+                    <span style="background:rgba(10,22,40,0.8);border:1px solid var(--gold);color:var(--gold);font-family:'Bebas Neue',sans-serif;font-size:13px;letter-spacing:2px;padding:4px 10px;border-radius:4px">● LIVE</span>
+                    <span id="cam-status-badge" style="background:rgba(10,22,40,0.8);border:1px solid var(--border);color:var(--text-dim);font-size:11px;letter-spacing:1px;padding:4px 10px;border-radius:4px;text-transform:uppercase">READY</span>
+                </div>
+            </div>
+
+            <!-- Scanning flash effect -->
+            <div id="scan-flash" style="display:none;position:absolute;inset:0;background:rgba(201,168,76,0.15);border-radius:8px;animation:flash 0.3s ease-out;pointer-events:none"></div>
+        </div>
+
+        <!-- Status -->
+        <div style="text-align:center;margin-bottom:12px">
+            <div id="scan-status" style="font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:3px;color:var(--text-dim)">READY</div>
+            <div id="scan-sub" style="font-size:13px;color:var(--text-dim);margin-top:4px;min-height:18px">Press Scan to begin face recognition</div>
+        </div>
+
+        <!-- Progress bar -->
+        <div style="background:var(--bg);border-radius:4px;height:4px;margin-bottom:16px;overflow:hidden">
+            <div id="progress-bar" style="height:100%;width:0%;background:var(--gold);transition:width 0.5s ease;border-radius:4px"></div>
+        </div>
+
+        <!-- Buttons -->
+        <div style="display:flex;gap:10px;margin-bottom:16px">
+            <button id="scan-btn" onclick="startSearch()" class="btn btn-gold" style="flex:1;justify-content:center">
+                👁 Scan Face
+            </button>
+            <button id="cancel-btn" onclick="cancelSearch()" class="btn btn-outline" style="display:none;flex:1;justify-content:center">
+                ✕ Cancel
+            </button>
+        </div>
+
+        <!-- Tip -->
+        <div style="padding:10px 14px;background:var(--bg);border-radius:6px;border:1px solid var(--border);font-size:12px;color:var(--text-dim)">
+            💡 <strong style="color:var(--gold)">Tips:</strong> Face the camera directly, ensure good lighting, and stay still when the frame turns gold.
+        </div>
+
+        <!-- Log -->
+        <div id="progress-log" style="margin-top:14px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:12px;min-height:80px;max-height:130px;overflow-y:auto;font-family:'DM Mono',monospace;font-size:11px">
+            <div style="color:var(--text-dim)">Awaiting scan…</div>
+        </div>
+    </div>
+
+    <!-- RIGHT — Result Panel -->
+    <div id="result-panel">
+
+        <!-- Default -->
+        <div id="no-result" class="card" style="text-align:center;padding:60px 40px">
+            <div style="font-size:56px;margin-bottom:16px;opacity:0.3">👁</div>
+            <div style="font-family:'Bebas Neue',sans-serif;font-size:16px;letter-spacing:2px;color:var(--text-dim)">NO SCAN YET</div>
+            <div style="font-size:13px;color:var(--text-dim);margin-top:8px">Scan a face to see the matching holder record here</div>
+        </div>
+
+        <!-- Not found -->
+        <div id="not-found" class="card" style="text-align:center;padding:60px 40px;display:none;border-color:rgba(224,92,92,0.4)">
+            <div style="font-size:56px;margin-bottom:16px">❌</div>
+            <div style="font-family:'Bebas Neue',sans-serif;font-size:18px;letter-spacing:2px;color:var(--red)">NO MATCH FOUND</div>
+            <div style="font-size:13px;color:var(--text-dim);margin-top:8px">This face does not match any holder in the database</div>
+        </div>
+
+        <!-- Match -->
+        <div id="match-result" style="display:none">
+            <div class="card" style="border-color:rgba(76,175,130,0.5)">
+                <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px">
+                    <div style="font-size:32px">✅</div>
+                    <div>
+                        <div style="font-family:'Bebas Neue',sans-serif;font-size:20px;letter-spacing:2px;color:var(--green)">FACE MATCHED</div>
+                        <div style="font-size:12px;color:var(--text-dim);margin-top:2px">Confidence: <span id="match-confidence" class="mono text-gold">—</span>%</div>
+                    </div>
+                    <a id="view-record-btn" href="#" class="btn btn-gold" style="margin-left:auto">View Full Record →</a>
+                </div>
+
+                <div style="display:grid;grid-template-columns:100px 1fr;gap:20px;align-items:start">
+                    <div>
+                        <div id="result-photo" style="width:100px;height:130px;background:var(--bg);border:2px solid var(--gold);border-radius:6px;display:flex;align-items:center;justify-content:center;font-size:36px;overflow:hidden">👤</div>
+                        <div style="font-size:10px;letter-spacing:1px;text-transform:uppercase;color:var(--text-mute);margin-top:6px;text-align:center">Passport Photo</div>
+                    </div>
+                    <div>
+                        <div style="font-family:'Bebas Neue',sans-serif;font-size:26px;letter-spacing:2px;color:var(--text);margin-bottom:14px" id="result-name">—</div>
+                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+                            <div><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-mute)">Holder ID</div><div class="mono text-gold" id="result-id" style="font-size:14px">—</div></div>
+                            <div><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-mute)">License No.</div><div class="mono" id="result-license" style="font-size:14px">—</div></div>
+                            <div><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-mute)">Date of Birth</div><div class="mono" id="result-dob" style="font-size:14px">—</div></div>
+                            <div><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-mute)">Blood Group</div><div id="result-bg" style="font-size:14px">—</div></div>
+                            <div><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-mute)">License Class</div><div id="result-class" style="font-size:14px">—</div></div>
+                            <div><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-mute)">Expiry Date</div><div class="mono" id="result-expiry" style="font-size:14px">—</div></div>
+                            <div style="grid-column:1/-1"><div style="font-size:10px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text-mute)">Status</div><div id="result-status">—</div></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<style>
+@keyframes flash {
+    0%   { opacity: 1; }
+    100% { opacity: 0; }
+}
+</style>
+
+<script>
+let eventSource = null;
+let feedActive = false;
+
+function addLog(text, type) {
+    type = type || 'normal';
+    const log = document.getElementById('progress-log');
+    const line = document.createElement('div');
+    const colors = {normal:'var(--text)',dim:'var(--text-dim)',ok:'var(--green)',error:'var(--red)',success:'var(--gold)',step:'#7eb8f7',warning:'#e0984a',info:'var(--text-dim)',notfound:'var(--red)'};
+    const prefixes = {ok:'✓ ',error:'✕ ',success:'★ ',step:'→ ',warning:'⚠ ',notfound:'✕ '};
+    line.style.color = colors[type] || colors.normal;
+    line.style.marginBottom = '3px';
+    line.textContent = (prefixes[type] || '') + text;
+    log.appendChild(line);
+    log.scrollTop = log.scrollHeight;
+}
+
+function clearLog() { document.getElementById('progress-log').innerHTML = ''; }
+function setStatus(t, sub) {
+    document.getElementById('scan-status').textContent = t;
+    if (sub !== undefined) document.getElementById('scan-sub').textContent = sub;
+}
+function setProgress(pct, color) {
+    const bar = document.getElementById('progress-bar');
+    bar.style.width = pct + '%';
+    bar.style.background = color || 'var(--gold)';
+}
+function setBadge(text, color) {
+    const badge = document.getElementById('cam-status-badge');
+    badge.textContent = text;
+    badge.style.borderColor = color || 'var(--border)';
+    badge.style.color = color || 'var(--text-dim)';
+}
+
+function showVideoFeed() {
+    if (feedActive) return;
+    feedActive = true;
+    const feed = document.getElementById('video-feed');
+    const placeholder = document.getElementById('cam-placeholder');
+    const overlay = document.getElementById('video-overlay');
+    feed.src = '/face-search/video-feed?' + Date.now();
+    feed.style.display = 'block';
+    placeholder.style.display = 'none';
+    overlay.style.display = 'block';
+}
+
+function hideVideoFeed() {
+    // Only hide visually — keep img.src so the camera worker stays alive
+    // and the next scan doesn't need to re-open /dev/video0
+    const feed = document.getElementById('video-feed');
+    const placeholder = document.getElementById('cam-placeholder');
+    const overlay = document.getElementById('video-overlay');
+    feed.style.display = 'none';
+    placeholder.style.display = 'flex';
+    overlay.style.display = 'none';
+    feedActive = false;
+}
+
+function flashScreen() {
+    const flash = document.getElementById('scan-flash');
+    flash.style.display = 'block';
+    setTimeout(() => { flash.style.display = 'none'; }, 400);
+}
+
+function showPanel(name) {
+    document.getElementById('no-result').style.display = 'none';
+    document.getElementById('not-found').style.display = 'none';
+    document.getElementById('match-result').style.display = 'none';
+    document.getElementById(name).style.display = 'block';
+}
+
+function startSearch() {
+    const btn = document.getElementById('scan-btn');
+    btn.disabled = true;
+    btn.textContent = '⋯ Scanning…';
+    document.getElementById('cancel-btn').style.display = 'flex';
+    clearLog();
+    setStatus('INITIALISING', 'Starting camera…');
+    setProgress(5);
+    showPanel('no-result');
+
+    showVideoFeed();
+    setBadge('STARTING', 'var(--gold)');
+    setStatus('STARTING CAMERA', 'Warming up…');
+
+    // Give camera 1s to settle before kicking off the recognition thread
+    setTimeout(() => {
+        fetch('/face-search/start', {method: 'POST'})
+            .then(r => r.json())
+            .then(data => {
+                if (data.error) {
+                    addLog(data.error, 'error');
+                    resetScanner();
+                    return;
+                }
+                setBadge('LIVE', 'var(--gold)');
+                setStatus('LOOK AT CAMERA', 'Hold still — capturing in 2 seconds…');
+                listenToStream();
+            })
+            .catch(err => {
+                addLog('Failed to start: ' + err, 'error');
+                resetScanner();
+            });
+    }, 1000);
+}
+
+function listenToStream() {
+    if (eventSource) eventSource.close();
+    eventSource = new EventSource('/face-search/stream');
+
+    eventSource.onmessage = function(e) {
+        const msg = JSON.parse(e.data);
+
+        if (msg.type === 'waiting') return;
+        if (msg.type === 'info') {
+            setStatus('COMPARING', msg.text.slice(0, 40));
+            const bar = document.getElementById('progress-bar');
+            setProgress(Math.min(parseInt(bar.style.width || '0') + 3, 88));
+            return;
+        }
+
+        addLog(msg.text, msg.type);
+
+        if (msg.type === 'step') {
+            setProgress(30);
+            setStatus('SCANNING', msg.text.replace(/…$/, ''));
+            if (msg.text.includes('Position') || msg.text.includes('camera')) {
+                setBadge('CAPTURING', 'var(--gold)');
+                flashScreen();
+            }
+        } else if (msg.type === 'ok') {
+            const bar = document.getElementById('progress-bar');
+            setProgress(Math.min(parseInt(bar.style.width || '0') + 10, 90));
+            if (msg.text.includes('captured')) {
+                setBadge('PROCESSING', '#7eb8f7');
+                flashScreen();
+                setStatus('PROCESSING', 'Analysing face…');
+            }
+        } else if (msg.type === 'success') {
+            eventSource.close(); eventSource = null;
+            setProgress(100, 'var(--green)');
+            setStatus('MATCH FOUND', '');
+            setBadge('MATCHED ✓', 'var(--green)');
+
+            fetch('/face-search/last-match')
+                .then(r => r.json())
+                .then(data => { if (data.holder_id) showMatchResult(data); });
+
+            setTimeout(() => {
+                hideVideoFeed();
+                setBadge('READY', '');
+            }, 2000);
+            resetScanButton();
+
+        } else if (msg.type === 'notfound') {
+            eventSource.close(); eventSource = null;
+            setProgress(100, 'var(--red)');
+            setStatus('NOT FOUND', 'No matching face in database');
+            setBadge('NOT FOUND', 'var(--red)');
+            showPanel('not-found');
+            setTimeout(hideVideoFeed, 2000);
+            resetScanButton();
+
+        } else if (msg.type === 'error') {
+            eventSource.close(); eventSource = null;
+            setStatus('ERROR', msg.text);
+            setBadge('ERROR', 'var(--red)');
+            hideVideoFeed();
+            resetScanButton();
+        }
+    };
+
+    eventSource.onerror = function() {
+        addLog('Connection lost.', 'error');
+        eventSource.close(); eventSource = null;
+        resetScanner();
+    };
+}
+
+function resetScanButton() {
+    const btn = document.getElementById('scan-btn');
+    btn.disabled = false;
+    btn.textContent = '👁 Scan Again';
+    document.getElementById('cancel-btn').style.display = 'none';
+}
+
+function resetScanner() {
+    setProgress(0);
+    setStatus('READY', 'Press Scan to begin face recognition');
+    hideVideoFeed();
+    setBadge('READY', '');
+    resetScanButton();
+}
+
+function cancelSearch() {
+    fetch('/face-search/cancel', {method: 'POST'});
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    hideVideoFeed();
+    resetScanner();
+    addLog('Scan cancelled.', 'dim');
+}
+
+function showMatchResult(data) {
+    document.getElementById('result-name').textContent = data.name || '—';
+    document.getElementById('result-id').textContent = '#' + data.holder_id;
+    document.getElementById('result-license').textContent = data.license_number || '—';
+    document.getElementById('result-dob').textContent = data.date_of_birth || '—';
+    document.getElementById('result-bg').textContent = data.blood_group || '—';
+    document.getElementById('result-class').textContent = data.license_class ? 'Class ' + data.license_class : '—';
+    document.getElementById('match-confidence').textContent = data.confidence || '—';
+
+    const expiry = data.expiry_date || '';
+    const today = new Date().toISOString().split('T')[0];
+    const expired = expiry && expiry < today;
+    const expiryEl = document.getElementById('result-expiry');
+    expiryEl.textContent = expiry || '—';
+    expiryEl.style.color = expired ? 'var(--red)' : 'var(--green)';
+
+    document.getElementById('result-status').innerHTML = expired
+        ? '<span class="badge badge-red">EXPIRED</span>'
+        : expiry ? '<span class="badge badge-green">ACTIVE</span>'
+                 : '<span class="badge badge-grey">NO LICENSE</span>';
+
+    if (data.photo_path) {
+        document.getElementById('result-photo').innerHTML =
+            `<img src="/${data.photo_path}" style="width:100%;height:100%;object-fit:cover">`;
+    }
+
+    document.getElementById('view-record-btn').href = '/holders/' + data.holder_id;
+    showPanel('match-result');
+}
+</script>
+{% endblock %}
