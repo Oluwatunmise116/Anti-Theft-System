@@ -521,6 +521,23 @@ def gate_entry_vehicle_start():
     return jsonify({"started": True})
 
 
+@app.route("/gate/entry/vehicle/auto-start", methods=["POST"])
+def gate_entry_vehicle_auto_start():
+    """Start auto-detect: YOLO watches the live feed and captures when a vehicle is stable."""
+    capture_id = request.json.get("capture_id")
+    if not capture_id:
+        return jsonify({"error": "Missing capture_id"}), 400
+    if not gm.start_vehicle_session(capture_id):
+        return jsonify({"error": "Vehicle capture already in progress"}), 409
+    thread = threading.Thread(
+        target=gm.run_vehicle_auto_capture,
+        args=(capture_id, lambda _: None),
+        daemon=True,
+    )
+    thread.start()
+    return jsonify({"started": True})
+
+
 @app.route("/gate/entry/vehicle/stream/<capture_id>")
 def gate_entry_vehicle_stream(capture_id):
     def event_stream():
@@ -758,7 +775,8 @@ def gate_entry_confirm():
 
 @app.route("/gate/exit")
 def gate_exit():
-    return render_template("gate_exit.html")
+    capture_id = gm.new_capture_id()
+    return render_template("gate_exit.html", capture_id=capture_id)
 
 
 @app.route("/gate/exit/lookup")

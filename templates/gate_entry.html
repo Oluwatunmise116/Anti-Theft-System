@@ -24,7 +24,7 @@
 <div class="page-header">
     <div>
         <div class="page-greeting">Gate <span>Entry</span></div>
-        <div class="page-sub">Capture vehicle, then driver face, then fingerprint.</div>
+        <div class="page-sub">Capture vehicle, then verify driver identity.</div>
     </div>
     <div class="page-actions">
         <a href="{{ url_for('gate_trips') }}" class="btn btn-outline">Trip Log →</a>
@@ -61,13 +61,13 @@
 
 <div style="display:grid;grid-template-columns:1fr 380px;gap:18px;align-items:start;">
 
-<!-- ── LEFT: LOG ─────────────────────────────────────────────── -->
+<!-- ── LEFT: HINT + LOG ──────────────────────────────────── -->
 <div style="display:flex;flex-direction:column;gap:14px;">
 
     <!-- Status hint -->
     <div class="card" style="padding:12px 16px;">
         <span id="step-hint" style="font-size:13px;color:var(--text-dim);">
-            Point camera at vehicle, then click <strong>Capture Photo</strong>.
+            Click <strong>Auto-Detect Vehicle</strong> to begin.
         </span>
     </div>
 
@@ -80,126 +80,10 @@
              font-family:'DM Mono',monospace;max-height:260px;overflow-y:auto;"></div>
     </div>
 
-</div>
-
-<!-- ── RIGHT: 3-STEP FORM ────────────────────────────────────── -->
-<div style="display:flex;flex-direction:column;gap:14px;">
-
-    <!-- STEP 1: VEHICLE -->
-    <div class="card" id="card-step1">
-        <div class="step-header">
-            <div class="step-num active" id="num-1">1</div>
-            <div class="step-label active" id="lbl-1">Vehicle — Plate &amp; Colour</div>
-        </div>
-        <div class="step-body">
-
-            <!-- Vehicle photo preview -->
-            <div class="photo-box" style="width:100%;height:200px;margin-bottom:10px;background:#000;">
-                <!-- Live camera feed (while framing) -->
-                <img id="vehicle-stream" src="" style="display:none;width:100%;height:100%;object-fit:contain;">
-                <!-- Captured still -->
-                <img id="vehicle-photo" src="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:6px;">
-                <!-- Placeholder -->
-                <div id="vehicle-ph" class="photo-placeholder">
-                    <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5"
-                         viewBox="0 0 24 24"><rect x="1" y="8" width="22" height="10" rx="2"/>
-                        <path d="M5 8V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>
-                    <span style="font-size:10px;color:var(--text-mute);">Click "Capture Photo" to start camera</span>
-                </div>
-            </div>
-
-            <!-- Action buttons -->
-            <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
-                <button id="btn-snap" class="btn btn-gold btn-sm" onclick="startVehicleStream()">
-                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"
-                         viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/>
-                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/></svg>
-                    Capture Photo
-                </button>
-                <button id="btn-take" class="btn btn-gold btn-sm" style="display:none;" onclick="snapVehicle()">
-                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"
-                         viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/>
-                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/></svg>
-                    Take Photo
-                </button>
-                <button id="btn-retake" class="btn btn-ghost btn-sm" style="display:none;" onclick="startVehicleStream()">
-                    ↩ Retake
-                </button>
-                <button id="btn-analyse" class="btn btn-outline btn-sm" style="display:none;" onclick="analyseVehicle()">
-                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"
-                         viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/>
-                        <line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-                    Analyse
-                </button>
-                <span id="v1-status" style="font-size:11.5px;color:var(--text-mute);"></span>
-            </div>
-
-            <!-- Plate (auto-filled after analyse) -->
-            <div class="form-group" style="margin-bottom:8px;">
-                <label>Plate Number <span style="color:var(--red)">*</span></label>
-                <input id="plate-input" type="text" placeholder="Auto-detected or type manually…"
-                       style="text-transform:uppercase;font-family:'DM Mono',monospace;
-                              letter-spacing:2px;font-size:15px;">
-            </div>
-
-        </div>
-    </div>
-
-    <!-- STEP 2: DRIVER FACE -->
-    <div class="card" id="card-step2" style="opacity:.45;pointer-events:none;">
-        <div class="step-header">
-            <div class="step-num" id="num-2">2</div>
-            <div class="step-label" id="lbl-2">Driver Face</div>
-        </div>
-        <div class="step-body">
-            <div class="photo-box" style="width:100%;height:180px;margin-bottom:12px;background:#000;">
-                <img id="face-stream" src="" style="display:none;width:100%;height:100%;object-fit:contain;">
-                <img id="face-photo" src="" style="display:none;width:100%;height:100%;object-fit:cover;">
-                <div id="face-ph" class="photo-placeholder">
-                    <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5"
-                         viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/>
-                        <path d="M9 12a5 5 0 0 0-5 5v1h16v-1a5 5 0 0 0-5-5"/></svg>
-                    <span style="font-size:10px;color:var(--text-mute);">Camera starts when you click Capture Face</span>
-                </div>
-            </div>
-            <div style="display:flex;gap:8px;">
-                <button id="btn-v2" class="btn btn-gold btn-sm" onclick="captureDriverFace()">
-                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"
-                         viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/>
-                        <path d="M9 12a5 5 0 0 0-5 5v1h16v-1a5 5 0 0 0-5-5"/></svg>
-                    Capture Face
-                </button>
-                <span id="v2-status" style="font-size:11.5px;color:var(--text-mute);align-self:center;"></span>
-            </div>
-        </div>
-    </div>
-
-    <!-- STEP 3: FINGERPRINT -->
-    <div class="card" id="card-step3" style="opacity:.45;pointer-events:none;">
-        <div class="step-header">
-            <div class="step-num" id="num-3">3</div>
-            <div class="step-label" id="lbl-3">Fingerprint</div>
-        </div>
-        <div class="step-body">
-            <div id="fp-log" style="font-size:11.5px;font-family:'DM Mono',monospace;
-                 color:var(--text-dim);min-height:18px;margin-bottom:10px;"></div>
-            <div style="display:flex;gap:8px;">
-                <button id="btn-fp" class="btn btn-outline btn-sm" onclick="startFP()">
-                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"
-                         viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
-                    Scan Fingerprint
-                </button>
-                <button id="btn-fp-cancel" class="btn btn-ghost btn-sm"
-                        style="display:none;" onclick="cancelFP()">Cancel</button>
-                <span id="fp-status" style="font-size:11.5px;color:var(--text-mute);align-self:center;"></span>
-            </div>
-        </div>
-    </div>
-
-    <!-- PERSON RECORD (appears after face or fingerprint lookup) -->
+    <!-- Person record (shows after face or FP lookup) -->
     <div class="card" id="card-person" style="display:none;">
         <div class="step-header">
-            <div class="step-num done" id="num-person"
+            <div class="step-num done"
                  style="background:var(--blue,#3b82f6);border-color:var(--blue,#3b82f6);color:#fff;">
                 <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                     <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
@@ -210,77 +94,148 @@
             <span id="person-badge" class="badge" style="margin-left:auto;font-size:10.5px;"></span>
         </div>
         <div class="step-body">
-
-            <!-- Loading state -->
-            <div id="person-loading" style="display:none;padding:6px 0;font-size:12px;
-                 color:var(--text-mute);">Searching database…</div>
-
-            <!-- Match found -->
+            <div id="person-loading" style="display:none;padding:6px 0;font-size:12px;color:var(--text-mute);">Searching database…</div>
             <div id="person-match" style="display:none;">
                 <div style="display:flex;gap:12px;align-items:flex-start;">
                     <div class="photo-box" style="width:62px;height:78px;flex-shrink:0;">
-                        <img id="person-photo" src="" style="display:none;width:100%;height:100%;
-                             object-fit:cover;border-radius:5px;">
+                        <img id="person-photo" src="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:5px;">
                         <div id="person-photo-ph" class="photo-placeholder">
-                            <svg width="16" height="16" fill="none" stroke="currentColor"
-                                 stroke-width="1.5" viewBox="0 0 24 24">
-                                <circle cx="12" cy="8" r="4"/>
-                                <path d="M9 12a5 5 0 0 0-5 5v1h16v-1a5 5 0 0 0-5-5"/>
+                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                                <circle cx="12" cy="8" r="4"/><path d="M9 12a5 5 0 0 0-5 5v1h16v-1a5 5 0 0 0-5-5"/>
                             </svg>
                         </div>
                     </div>
                     <div style="flex:1;min-width:0;">
-                        <div id="person-name" style="font-size:13.5px;font-weight:700;
-                             margin-bottom:8px;color:var(--text);"></div>
+                        <div id="person-name" style="font-size:13.5px;font-weight:700;margin-bottom:8px;color:var(--text);"></div>
                         <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;">
                             <div>
-                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;
-                                     letter-spacing:1px;margin-bottom:2px;">License No.</div>
-                                <div id="person-license" class="mono"
-                                     style="font-size:11.5px;color:var(--text-dim);letter-spacing:1px;"></div>
+                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">License No.</div>
+                                <div id="person-license" class="mono" style="font-size:11.5px;color:var(--text-dim);letter-spacing:1px;"></div>
                             </div>
                             <div>
-                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;
-                                     letter-spacing:1px;margin-bottom:2px;">Class</div>
+                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Class</div>
                                 <div id="person-class" style="font-size:11.5px;color:var(--text-dim);"></div>
                             </div>
                             <div>
-                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;
-                                     letter-spacing:1px;margin-bottom:2px;">Date of Birth</div>
+                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Date of Birth</div>
                                 <div id="person-dob" class="mono" style="font-size:11.5px;color:var(--text-dim);"></div>
                             </div>
                             <div>
-                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;
-                                     letter-spacing:1px;margin-bottom:2px;">Blood Group</div>
-                                <div id="person-blood" style="font-size:12px;font-weight:700;
-                                     color:var(--red,#ef4444);"></div>
+                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Blood Group</div>
+                                <div id="person-blood" style="font-size:12px;font-weight:700;color:var(--red,#ef4444);"></div>
                             </div>
                             <div>
-                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;
-                                     letter-spacing:1px;margin-bottom:2px;">License Expiry</div>
+                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">License Expiry</div>
                                 <div id="person-expiry" class="mono" style="font-size:11.5px;"></div>
                             </div>
                         </div>
                     </div>
                 </div>
             </div>
-
-            <!-- Not found -->
             <div id="person-notfound" style="display:none;padding:14px 0;text-align:center;">
-                <svg width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5"
-                     viewBox="0 0 24 24"
+                <svg width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"
                      style="color:var(--text-mute);display:block;margin:0 auto 8px;">
-                    <circle cx="12" cy="12" r="10"/>
-                    <path d="M15 9l-6 6M9 9l6 6"/>
+                    <circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/>
                 </svg>
-                <div style="font-size:13px;font-weight:600;color:var(--text-dim);">
-                    No record in database
-                </div>
+                <div style="font-size:13px;font-weight:600;color:var(--text-dim);">No record in database</div>
                 <div style="font-size:11px;color:var(--text-mute);margin-top:3px;">
                     This person is not registered in the system.
                 </div>
             </div>
+        </div>
+    </div>
 
+</div>
+
+<!-- ── RIGHT: STEPS ───────────────────────────────────────── -->
+<div style="display:flex;flex-direction:column;gap:14px;">
+
+    <!-- STEP 1: VEHICLE -->
+    <div class="card" id="card-step1">
+        <div class="step-header">
+            <div class="step-num active" id="num-1">1</div>
+            <div class="step-label active" id="lbl-1">Vehicle — Plate Detection</div>
+        </div>
+        <div class="step-body">
+            <div style="position:relative;width:100%;height:200px;margin-bottom:10px;background:#000;border-radius:8px;overflow:hidden;">
+                <img id="vehicle-stream" src="" style="display:none;width:100%;height:100%;object-fit:contain;">
+                <img id="vehicle-photo" src="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:6px;">
+                <div id="vehicle-ph" class="photo-placeholder" style="height:200px;">
+                    <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5"
+                         viewBox="0 0 24 24"><rect x="1" y="8" width="22" height="10" rx="2"/>
+                        <path d="M5 8V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>
+                    <span style="font-size:10px;color:var(--text-mute);">Click "Auto-Detect Vehicle" to start</span>
+                </div>
+                <div id="detect-overlay" style="display:none;position:absolute;bottom:8px;left:50%;
+                     transform:translateX(-50%);background:rgba(0,0,0,.65);color:#fff;
+                     font-size:11px;padding:4px 10px;border-radius:20px;white-space:nowrap;
+                     font-family:'DM Mono',monospace;"></div>
+            </div>
+            <div style="display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap;align-items:center;">
+                <button id="btn-auto" class="btn btn-gold btn-sm" onclick="startAutoDetect()">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"
+                         viewBox="0 0 24 24"><rect x="1" y="8" width="22" height="10" rx="2"/>
+                        <path d="M5 8V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>
+                    Auto-Detect Vehicle
+                </button>
+                <button id="btn-retake" class="btn btn-ghost btn-sm" style="display:none;" onclick="startAutoDetect()">↩ Retry</button>
+                <span id="v1-status" style="font-size:11.5px;color:var(--text-mute);"></span>
+            </div>
+            <div class="form-group" style="margin-bottom:8px;">
+                <label>Plate Number <span style="color:var(--red)">*</span></label>
+                <input id="plate-input" type="text" placeholder="Auto-detected or type manually…"
+                       style="text-transform:uppercase;font-family:'DM Mono',monospace;letter-spacing:2px;font-size:15px;">
+            </div>
+        </div>
+    </div>
+
+    <!-- STEP 2: FACE RECOGNITION -->
+    <div class="card" id="card-step2" style="opacity:.45;pointer-events:none;">
+        <div class="step-header">
+            <div class="step-num" id="num-2">2</div>
+            <div class="step-label" id="lbl-2">Face Recognition</div>
+        </div>
+        <div class="step-body">
+            <div class="photo-box" style="width:100%;height:160px;margin-bottom:12px;background:#000;">
+                <img id="face-stream" src="" style="display:none;width:100%;height:100%;object-fit:contain;">
+                <img id="face-photo" src="" style="display:none;width:100%;height:100%;object-fit:cover;">
+                <div id="face-ph" class="photo-placeholder">
+                    <svg width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.5"
+                         viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/>
+                        <path d="M9 12a5 5 0 0 0-5 5v1h16v-1a5 5 0 0 0-5-5"/></svg>
+                    <span style="font-size:10px;color:var(--text-mute);">Camera starts when you click Capture Face</span>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <button id="btn-v2" class="btn btn-gold btn-sm" onclick="captureDriverFace()">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"
+                         viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/>
+                        <path d="M9 12a5 5 0 0 0-5 5v1h16v-1a5 5 0 0 0-5-5"/></svg>
+                    Capture Face
+                </button>
+                <span id="v2-status" style="font-size:11.5px;color:var(--text-mute);"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- STEP 3: FINGERPRINT SCAN -->
+    <div class="card" id="card-step3" style="opacity:.45;pointer-events:none;">
+        <div class="step-header">
+            <div class="step-num" id="num-3">3</div>
+            <div class="step-label" id="lbl-3">Fingerprint Scan</div>
+        </div>
+        <div class="step-body">
+            <div id="fp-log" style="font-size:11.5px;font-family:'DM Mono',monospace;
+                 color:var(--text-dim);min-height:18px;margin-bottom:10px;"></div>
+            <div style="display:flex;gap:8px;align-items:center;">
+                <button id="btn-fp" class="btn btn-outline btn-sm" onclick="startFP()">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"
+                         viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                    Scan Fingerprint
+                </button>
+                <button id="btn-fp-cancel" class="btn btn-ghost btn-sm" style="display:none;" onclick="cancelFP()">Cancel</button>
+                <span id="fp-status" style="font-size:11.5px;color:var(--text-mute);"></span>
+            </div>
         </div>
     </div>
 
@@ -296,7 +251,7 @@
             Log Entry — GRANTED
         </button>
         <div id="confirm-note" style="margin-top:6px;font-size:11px;color:var(--text-mute);">
-            Complete steps 1 and 2 to enable.
+            Complete step 1 first.
         </div>
     </div>
 
@@ -305,29 +260,79 @@
 
 <script>
 const CAPTURE_ID = "{{ capture_id }}";
-let step1Done = false;
-let step2Done = false;
-let step3Done = false;
-let vehicleBusy = false;
-let faceBusy    = false;
+
+// ── State ─────────────────────────────────────────────────────────────────────
+let step1Done    = false;   // vehicle captured
+let faceChecked  = false;   // face scan completed (match or not-found)
+let fpChecked    = false;   // fp scan completed (match or not-found)
+let driverInDB   = false;   // face OR fingerprint found a match
+let vehicleBusy  = false;
+let faceBusy     = false;
 let currentHolderId = null;
 
-// ── PERSON RECORD HELPERS ────────────────────────────────────────────────────
+// ── CONFIRM LOGIC ─────────────────────────────────────────────────────────────
+//
+// Rule 1: Driver found in DB (either face OR fingerprint) → enable immediately
+// Rule 2: Driver NOT found → need BOTH face AND fingerprint completed → enable
+
+function checkConfirm() {
+    const note = document.getElementById('confirm-note');
+    const btn  = document.getElementById('btn-confirm');
+
+    if (!step1Done) {
+        btn.disabled = true;
+        note.textContent = 'Complete step 1 (vehicle) first.';
+        return;
+    }
+
+    if (driverInDB) {
+        btn.disabled = false;
+        note.style.color = 'var(--green)';
+        note.textContent = 'Driver identified in database. Ready to log entry.';
+        return;
+    }
+
+    note.style.color = 'var(--text-mute)';
+
+    if (!faceChecked && !fpChecked) {
+        btn.disabled = true;
+        note.textContent = 'Scan face or fingerprint to verify driver.';
+        return;
+    }
+
+    if (faceChecked && fpChecked) {
+        // Both done, neither found a match — allow entry (unregistered driver)
+        btn.disabled = false;
+        note.style.color = 'var(--amber)';
+        note.textContent = 'Driver not in database — both checks completed.';
+        return;
+    }
+
+    // One done, not found — need the other
+    btn.disabled = true;
+    if (faceChecked && !fpChecked) {
+        note.textContent = 'Not in database via face — fingerprint scan also required.';
+    } else {
+        note.textContent = 'Not in database via fingerprint — face scan also required.';
+    }
+}
+
+// ── PERSON RECORD HELPERS ─────────────────────────────────────────────────────
 
 function personLookupStart() {
     const card = document.getElementById('card-person');
     card.style.display = '';
-    document.getElementById('person-loading').style.display = '';
-    document.getElementById('person-match').style.display = 'none';
+    document.getElementById('person-loading').style.display  = '';
+    document.getElementById('person-match').style.display    = 'none';
     document.getElementById('person-notfound').style.display = 'none';
-    document.getElementById('person-badge').className = '';
-    document.getElementById('person-badge').textContent = '';
+    document.getElementById('person-badge').className        = '';
+    document.getElementById('person-badge').textContent      = '';
 }
 
 function showPersonRecord(msg) {
-    document.getElementById('person-loading').style.display = 'none';
+    document.getElementById('person-loading').style.display  = 'none';
     document.getElementById('person-notfound').style.display = 'none';
-    document.getElementById('person-match').style.display = '';
+    document.getElementById('person-match').style.display    = '';
 
     const method = msg.match_method === 'fingerprint' ? 'Fingerprint' : 'Face';
     const badge = document.getElementById('person-badge');
@@ -340,30 +345,28 @@ function showPersonRecord(msg) {
     document.getElementById('person-dob').textContent     = msg.date_of_birth  || '—';
     document.getElementById('person-blood').textContent   = msg.blood_group    || '—';
 
-    const expiryEl  = document.getElementById('person-expiry');
-    const today     = new Date().toISOString().slice(0, 10);
-    expiryEl.textContent   = msg.expiry_date || '—';
-    expiryEl.style.color   = msg.expiry_date && msg.expiry_date < today
+    const expiryEl = document.getElementById('person-expiry');
+    const today    = new Date().toISOString().slice(0, 10);
+    expiryEl.textContent = msg.expiry_date || '—';
+    expiryEl.style.color = msg.expiry_date && msg.expiry_date < today
         ? 'var(--red,#ef4444)' : 'var(--text-dim)';
 
     const img = document.getElementById('person-photo');
     const ph  = document.getElementById('person-photo-ph');
     if (msg.photo_url) {
-        img.src           = msg.photo_url;
-        img.style.display = '';
-        ph.style.display  = 'none';
+        img.src = msg.photo_url; img.style.display = ''; ph.style.display = 'none';
     } else {
-        img.style.display = 'none';
-        ph.style.display  = '';
+        img.style.display = 'none'; ph.style.display = '';
     }
     currentHolderId = msg.holder_id || null;
+
+    document.getElementById('card-person').scrollIntoView({behavior:'smooth', block:'nearest'});
 }
 
 function showPersonNotFound() {
     document.getElementById('person-loading').style.display  = 'none';
     document.getElementById('person-match').style.display    = 'none';
     document.getElementById('person-notfound').style.display = '';
-
     const badge = document.getElementById('person-badge');
     badge.className = 'badge badge-red';
     badge.innerHTML = '<span class="dot"></span>Not Found';
@@ -371,19 +374,11 @@ function showPersonNotFound() {
 
 // ── CAMERA STREAM HELPERS ─────────────────────────────────────────────────────
 
-function startVehicleStream() {
-    document.getElementById('vehicle-ph').style.display = 'none';
+function showVehicleStream() {
+    document.getElementById('vehicle-ph').style.display    = 'none';
     document.getElementById('vehicle-photo').style.display = 'none';
-    const stream = document.getElementById('vehicle-stream');
-    stream.src = '/gate/video-feed';
-    stream.style.display = '';
-    document.getElementById('btn-snap').style.display = 'none';
-    document.getElementById('btn-take').style.display = '';
-    document.getElementById('btn-retake').style.display = 'none';
-    document.getElementById('btn-analyse').style.display = 'none';
-    setStatus('v1', '');
-    document.getElementById('step-hint').textContent =
-        'Camera live — position the vehicle, then click Take Photo.';
+    const s = document.getElementById('vehicle-stream');
+    s.src = '/gate/video-feed'; s.style.display = '';
 }
 
 function stopVehicleStream() {
@@ -393,9 +388,8 @@ function stopVehicleStream() {
 
 function startFaceStream() {
     document.getElementById('face-ph').style.display = 'none';
-    const stream = document.getElementById('face-stream');
-    stream.src = '/gate/video-feed';
-    stream.style.display = '';
+    const s = document.getElementById('face-stream');
+    s.src = '/gate/video-feed'; s.style.display = '';
 }
 
 function stopFaceStream() {
@@ -403,114 +397,96 @@ function stopFaceStream() {
     s.src = ''; s.style.display = 'none';
 }
 
-// ── STEP 1A: SNAP PHOTO ───────────────────────────────────────────────────────
-
-function snapVehicle() {
-    if (vehicleBusy) return;
-    vehicleBusy = true;
-    stopVehicleStream();   // disconnect MJPEG; camera worker stays running for snap
-    setStatus('v1', 'Capturing…');
-    document.getElementById('btn-take').disabled = true;
-    document.getElementById('step-hint').textContent = 'Capturing frame…';
-
-    fetch('/gate/entry/vehicle/snap', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({capture_id: CAPTURE_ID}),
-    }).then(r => r.json()).then(d => {
-        vehicleBusy = false;
-        document.getElementById('btn-take').disabled = false;
-
-        if (d.error) {
-            log('error', d.error);
-            setStatus('v1', 'Failed — try again');
-            startVehicleStream();  // restart preview
-            return;
-        }
-
-        // Show captured still
-        const img = document.getElementById('vehicle-photo');
-        img.src = d.url + '?t=' + Date.now();
-        img.style.display = '';
-
-        // Buttons: hide Take, show Retake + Analyse
-        document.getElementById('btn-take').style.display = 'none';
-        document.getElementById('btn-retake').style.display = '';
-        document.getElementById('btn-analyse').style.display = '';
-        document.getElementById('btn-analyse').disabled = false;
-
-        setStatus('v1', '');
-        document.getElementById('step-hint').textContent =
-            'Photo captured. Click "Analyse" to detect plate &amp; colour, or "Retake" if unclear.';
-        log('ok', 'Photo captured ✓ — review, then click Analyse');
-    });
+function setDetectOverlay(text) {
+    const el = document.getElementById('detect-overlay');
+    if (text) { el.textContent = text; el.style.display = ''; }
+    else       { el.style.display = 'none'; }
 }
 
-// ── STEP 1B: ANALYSE PHOTO ────────────────────────────────────────────────────
+// ── STEP 1: AUTO-DETECT VEHICLE ───────────────────────────────────────────────
 
-function analyseVehicle() {
+function startAutoDetect() {
     if (vehicleBusy) return;
     vehicleBusy = true;
-    setStatus('v1', 'Analysing…');
-    document.getElementById('btn-analyse').disabled = true;
-    document.getElementById('btn-retake').disabled = true;
-    document.getElementById('step-hint').textContent = 'Running plate recognition and colour detection…';
 
-    fetch('/gate/entry/vehicle/start', {
+    document.getElementById('vehicle-photo').style.display  = 'none';
+    document.getElementById('btn-auto').disabled            = true;
+    document.getElementById('btn-retake').style.display     = 'none';
+    setStatus('v1', 'Detecting…');
+    showVehicleStream();
+    setDetectOverlay('Scanning for vehicle…');
+    document.getElementById('step-hint').textContent =
+        'Camera live — position the vehicle in frame. Auto-capture will trigger when detected.';
+
+    fetch('/gate/entry/vehicle/auto-start', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({capture_id: CAPTURE_ID}),
     }).then(r => r.json()).then(d => {
         if (d.error) {
             log('error', d.error);
             vehicleBusy = false;
-            document.getElementById('btn-analyse').disabled = false;
-            document.getElementById('btn-retake').disabled = false;
+            document.getElementById('btn-auto').disabled = false;
+            setDetectOverlay(null);
+            stopVehicleStream();
+            document.getElementById('vehicle-ph').style.display = '';
             setStatus('v1', '');
             return;
         }
+
         const es = new EventSource('/gate/entry/vehicle/stream/' + CAPTURE_ID);
         es.onmessage = e => {
             const msg = JSON.parse(e.data);
             log(msg.type, msg.text);
 
-            if (msg.plate !== undefined)
-                document.getElementById('plate-input').value = msg.plate;
+            if (msg.type === 'waiting') setDetectOverlay(msg.text);
+            if (msg.plate !== undefined) document.getElementById('plate-input').value = msg.plate;
+            if (msg.vehicle_url) {
+                stopVehicleStream();
+                setDetectOverlay(null);
+                const img = document.getElementById('vehicle-photo');
+                img.src = msg.vehicle_url + '?t=' + Date.now();
+                img.style.display = '';
+            }
             if (msg.type === 'success') {
-                step1Done = true;
+                step1Done   = true;
                 vehicleBusy = false;
                 markStep(1, 'done');
+                // Activate BOTH face and fingerprint steps simultaneously
                 activateStep(2);
-                // Show retake in case user wants to redo, but hide analyse
+                activateStep(3);
+                document.getElementById('btn-auto').disabled        = false;
                 document.getElementById('btn-retake').style.display = '';
-                document.getElementById('btn-retake').disabled = false;
-                document.getElementById('btn-analyse').style.display = 'none';
                 setStatus('v1', '');
                 document.getElementById('step-hint').textContent =
-                    'Vehicle done. Point camera at driver window for face capture.';
+                    'Vehicle captured. Scan face and/or fingerprint to verify driver.';
                 es.close();
                 checkConfirm();
             }
             if (msg.type === 'error') {
                 vehicleBusy = false;
-                document.getElementById('btn-analyse').disabled = false;
-                document.getElementById('btn-retake').disabled = false;
-                setStatus('v1', 'Analysis failed — retake or enter manually');
-                // Still mark step done if user has typed a plate manually
+                stopVehicleStream();
+                setDetectOverlay(null);
+                document.getElementById('vehicle-ph').style.display = '';
+                document.getElementById('btn-auto').disabled        = false;
+                document.getElementById('btn-retake').style.display = 'none';
+                setStatus('v1', 'Detection failed — try again');
                 document.getElementById('step-hint').textContent =
-                    'Analysis failed. Enter plate manually or retake photo.';
+                    'Detection failed. Try again or enter plate manually.';
                 es.close();
             }
         };
         es.onerror = () => {
             log('error', 'Stream disconnected.');
             vehicleBusy = false;
-            document.getElementById('btn-analyse').disabled = false;
-            document.getElementById('btn-retake').disabled = false;
+            stopVehicleStream();
+            setDetectOverlay(null);
+            document.getElementById('btn-auto').disabled = false;
             es.close();
         };
     });
 }
 
-// ── STEP 2: FACE CAPTURE ──────────────────────────────────────────────────────
+// ── STEP 2: FACE RECOGNITION ──────────────────────────────────────────────────
 
 function captureDriverFace() {
     if (faceBusy || !step1Done) return;
@@ -519,8 +495,11 @@ function captureDriverFace() {
     document.getElementById('btn-v2').disabled = true;
     document.getElementById('step-hint').textContent =
         'Camera live — position driver\'s face in frame…';
-    personLookupStart();
-    startFaceStream();  // show live feed while server waits to capture
+
+    // Only reset person card if driver not yet found in DB
+    if (!driverInDB) personLookupStart();
+
+    startFaceStream();
 
     fetch('/gate/entry/face/start', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
@@ -534,63 +513,80 @@ function captureDriverFace() {
             document.getElementById('btn-v2').disabled = false;
             return;
         }
+
         const es = new EventSource('/gate/entry/face/stream/' + CAPTURE_ID);
         es.onmessage = e => {
             const msg = JSON.parse(e.data);
             log(msg.type, msg.text);
 
             if (msg.face_url) {
-                stopFaceStream();  // face captured — stop live feed
+                stopFaceStream();
                 const img = document.getElementById('face-photo');
                 img.src = msg.face_url; img.style.display = '';
                 document.getElementById('face-ph').style.display = 'none';
             }
-            if (msg.type === 'db_match')    { showPersonRecord(msg); }
-            if (msg.type === 'db_notfound') { showPersonNotFound(); }
+            if (msg.type === 'db_match') {
+                driverInDB = true;
+                showPersonRecord(msg);
+            }
+            if (msg.type === 'db_notfound') {
+                showPersonNotFound();
+            }
             if (msg.type === 'success') {
-                if (document.getElementById('person-loading').style.display !== 'none') {
-                    document.getElementById('card-person').style.display = 'none';
-                }
-                step2Done = true;
-                faceBusy = false;
+                faceChecked = true;
+                faceBusy    = false;
                 markStep(2, 'done');
-                activateStep(3);
                 setStatus('v2', '');
                 document.getElementById('btn-v2').disabled = false;
-                document.getElementById('step-hint').textContent =
-                    'Steps 1 &amp; 2 done. Scan fingerprint or log entry.';
+                if (!driverInDB) {
+                    if (document.getElementById('person-loading').style.display !== 'none') {
+                        document.getElementById('card-person').style.display = 'none';
+                    }
+                    document.getElementById('step-hint').textContent = fpChecked
+                        ? 'Both checks completed — driver not in database.'
+                        : 'Not found via face — fingerprint scan also required.';
+                } else {
+                    document.getElementById('step-hint').textContent =
+                        'Driver identified. Ready to log entry.';
+                }
                 es.close();
                 checkConfirm();
             }
             if (msg.type === 'error') {
-                document.getElementById('card-person').style.display = 'none';
                 faceBusy = false;
                 stopFaceStream();
                 document.getElementById('btn-v2').disabled = false;
                 setStatus('v2', 'Failed — try again');
                 document.getElementById('step-hint').textContent =
-                    'No face detected. Try again.';
+                    'No face detected. Try again or scan fingerprint.';
+                if (!driverInDB) document.getElementById('card-person').style.display = 'none';
                 es.close();
             }
         };
         es.onerror = () => {
             log('error', 'Stream disconnected.');
-            document.getElementById('card-person').style.display = 'none';
             faceBusy = false;
             stopFaceStream();
             document.getElementById('btn-v2').disabled = false;
+            if (!driverInDB) document.getElementById('card-person').style.display = 'none';
             es.close();
         };
     });
 }
 
-// ── STEP 3: FINGERPRINT ───────────────────────────────────────────────────────
+// ── STEP 3: FINGERPRINT SCAN ──────────────────────────────────────────────────
 
 function startFP() {
+    if (!step1Done) return;
     document.getElementById('btn-fp').disabled = true;
     document.getElementById('btn-fp-cancel').style.display = '';
     setFpStatus('');
-    personLookupStart();
+
+    // Only reset person card if driver not yet found in DB
+    if (!driverInDB) personLookupStart();
+
+    let fpDbResult = false;
+
     fetch('/gate/entry/fp/start', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({capture_id: CAPTURE_ID}),
@@ -599,34 +595,57 @@ function startFP() {
             document.getElementById('fp-log').textContent = d.error;
             document.getElementById('btn-fp').disabled = false;
             document.getElementById('btn-fp-cancel').style.display = 'none';
+            if (!driverInDB) document.getElementById('card-person').style.display = 'none';
             return;
         }
+
         const es = new EventSource('/gate/entry/fp/stream/' + CAPTURE_ID);
         es.onmessage = e => {
             const msg = JSON.parse(e.data);
             document.getElementById('fp-log').textContent = msg.text;
-            if (msg.type === 'db_match')    { showPersonRecord(msg); }
-            if (msg.type === 'db_notfound') { showPersonNotFound(); }
+            log(msg.type, msg.text);
+
+            if (msg.type === 'db_match') {
+                fpDbResult  = true;
+                driverInDB  = true;
+                showPersonRecord(msg);
+            }
+            if (msg.type === 'db_notfound') {
+                fpDbResult = true;
+                showPersonNotFound();
+            }
             if (msg.type === 'success') {
-                if (document.getElementById('person-loading').style.display !== 'none') {
-                    document.getElementById('card-person').style.display = 'none';
-                }
-                step3Done = true;
+                fpChecked = true;
                 markStep(3, 'done');
                 document.getElementById('btn-fp-cancel').style.display = 'none';
+                document.getElementById('btn-fp').disabled = false;
                 setFpStatus('Captured ✓');
+                if (!fpDbResult && document.getElementById('person-loading').style.display !== 'none') {
+                    // Loading was shown but no DB result arrived — hide the card
+                    document.getElementById('card-person').style.display = 'none';
+                }
+                if (!driverInDB) {
+                    document.getElementById('step-hint').textContent = faceChecked
+                        ? 'Both checks completed — driver not in database.'
+                        : 'Not found via fingerprint — face scan also required.';
+                } else {
+                    document.getElementById('step-hint').textContent =
+                        'Driver identified. Ready to log entry.';
+                }
                 es.close();
+                checkConfirm();
             }
             if (msg.type === 'error') {
-                document.getElementById('card-person').style.display = 'none';
                 document.getElementById('btn-fp').disabled = false;
                 document.getElementById('btn-fp-cancel').style.display = 'none';
-                setFpStatus('Failed');
+                setFpStatus('Failed — try again');
+                if (!driverInDB) document.getElementById('card-person').style.display = 'none';
                 es.close();
             }
         };
         es.onerror = () => {
-            document.getElementById('card-person').style.display = 'none';
+            document.getElementById('btn-fp').disabled = false;
+            if (!fpDbResult && !driverInDB) document.getElementById('card-person').style.display = 'none';
             es.close();
         };
     });
@@ -653,8 +672,8 @@ function confirmEntry() {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
             capture_id: CAPTURE_ID,
-            plate:  plate,
-            notes:  document.getElementById('notes-input').value,
+            plate:      plate,
+            notes:      document.getElementById('notes-input').value,
         }),
     }).then(r => r.json()).then(d => {
         if (d.ok) {
@@ -668,16 +687,7 @@ function confirmEntry() {
     });
 }
 
-// ── HELPERS ───────────────────────────────────────────────────────────────────
-
-function checkConfirm() {
-    const ok = step1Done && step2Done;
-    document.getElementById('btn-confirm').disabled = !ok;
-    if (ok) {
-        document.getElementById('confirm-note').textContent =
-            step3Done ? 'Vehicle + face + fingerprint captured.' : 'Vehicle + face captured.';
-    }
-}
+// ── UI HELPERS ────────────────────────────────────────────────────────────────
 
 function markStep(n, state) {
     const num = document.getElementById('num-' + n);
@@ -689,12 +699,10 @@ function markStep(n, state) {
 
 function activateStep(n) {
     const card = document.getElementById('card-step' + n);
-    card.style.opacity = '1';
+    card.style.opacity      = '1';
     card.style.pointerEvents = '';
-    const num = document.getElementById('num-' + n);
-    const lbl = document.getElementById('lbl-' + n);
-    num.className = 'step-num active';
-    lbl.className = 'step-label active';
+    document.getElementById('num-' + n).className = 'step-num active';
+    document.getElementById('lbl-' + n).className = 'step-label active';
 }
 
 function setStatus(id, txt) {
@@ -707,10 +715,12 @@ function setFpStatus(txt) {
 
 function log(type, text) {
     document.getElementById('log-card').style.display = '';
-    const body = document.getElementById('log-body');
+    const body   = document.getElementById('log-body');
     const colors = {step:'var(--text-dim)',ok:'var(--green)',warning:'var(--amber)',
-                    error:'var(--red)',success:'var(--green)',info:'var(--text-mute)',waiting:'var(--text-mute)'};
-    const icons  = {step:'→',ok:'✓',warning:'⚠',error:'✕',success:'✓',info:'·',waiting:'…'};
+                    error:'var(--red)',success:'var(--green)',info:'var(--text-mute)',
+                    waiting:'var(--text-mute)',db_match:'var(--green)',db_notfound:'var(--amber)'};
+    const icons  = {step:'→',ok:'✓',warning:'⚠',error:'✕',success:'✓',info:'·',
+                    waiting:'…',db_match:'✓',db_notfound:'—'};
     const row = document.createElement('div');
     row.style.cssText = `color:${colors[type]||'var(--text-dim)'};display:flex;gap:6px;`;
     row.innerHTML = `<span style="opacity:.5">${icons[type]||'·'}</span><span>${text}</span>`;
@@ -722,23 +732,20 @@ function log(type, text) {
 
 function checkModelStatus() {
     fetch('/gate/model/status').then(r => r.json()).then(d => {
-        const p = d.plate || d;   // backward compat if old format
+        const p = d.plate || d;
         const f = d.face  || {};
 
-        // Plate model banner
         const plateBanner = document.getElementById('model-banner-plate');
         if (!p.yolo_available) {
             document.getElementById('plate-model-msg').textContent =
                 'YOLO not installed — run: pip install ultralytics  (plate OCR fallback active)';
             plateBanner.style.display = 'flex';
         } else if (!p.model_present) {
-            document.getElementById('plate-model-msg').textContent =
-                'Plate detection model missing:';
+            document.getElementById('plate-model-msg').textContent = 'Plate detection model missing:';
             document.getElementById('btn-dl-plate').style.display = '';
             plateBanner.style.display = 'flex';
         }
 
-        // Face model banner
         const faceBanner = document.getElementById('model-banner-face');
         if (!f.face_cv_available) {
             document.getElementById('face-model-msg').textContent =
@@ -754,21 +761,17 @@ function checkModelStatus() {
 }
 
 function downloadModel(which) {
-    const banner  = document.getElementById('model-banner-' + which);
-    const dlBtn   = document.getElementById('btn-dl-' + which);
-    const dlSt    = document.getElementById(which + '-dl-status');
+    const banner = document.getElementById('model-banner-' + which);
+    const dlBtn  = document.getElementById('btn-dl-' + which);
+    const dlSt   = document.getElementById(which + '-dl-status');
     dlBtn.disabled = true;
     dlSt.textContent = 'Downloading…';
     fetch('/gate/model/download', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({model: which}),
     }).then(r => r.json()).then(d => {
-        if (d.ok) {
-            banner.style.display = 'none';
-        } else {
-            dlSt.textContent = 'Download failed — check connection and try again';
-            dlBtn.disabled = false;
-        }
+        if (d.ok) { banner.style.display = 'none'; }
+        else { dlSt.textContent = 'Download failed — try again'; dlBtn.disabled = false; }
     });
 }
 

@@ -613,6 +613,112 @@ def snap_vehicle_frame(cid: str) -> dict:
     return {"ok": True, "url": f"/gate/photo/vehicle_{cid}.jpg"}
 
 
+def run_vehicle_auto_capture(cid: str, on_complete):
+    """
+    Auto-detect a vehicle in the live camera feed using YOLO, then capture and run ANPR.
+    Mirrors how run_face_capture automatically captures when a face is detected.
+    """
+    def push(t, txt, **kw):
+        _push_vehicle(cid, t, txt, **kw)
+
+    if not OPENCV_AVAILABLE:
+        push("error", "OpenCV not installed")
+        on_complete(None); end_vehicle_session(cid); return
+
+    if not fm.ensure_camera_running():
+        push("error", "Camera unavailable — check connection")
+        on_complete(None); end_vehicle_session(cid); return
+
+    # Ensure YOLO model is present (downloads ~6 MB on first use)
+    if YOLO_AVAILABLE and not os.path.exists(_PLATE_MODEL_PATH):
+        download_plate_model(push_fn=push)
+        _get_plate_yolo()
+
+    vehicle_model = _get_vehicle_yolo()
+    if vehicle_model is None:
+        push("warning", "YOLO not available — capturing frame directly")
+
+    push("step", "Scanning for vehicle…")
+
+    CONSEC_NEEDED = 3       # consecutive detections before auto-capture
+    CONF_THRESH   = 0.45    # vehicle detection confidence threshold
+    CHECK_INTERVAL = 0.20   # seconds between frame checks
+    TIMEOUT        = 30.0   # seconds before giving up
+
+    detected_count = 0
+    deadline       = time.time() + TIMEOUT
+    captured_bgr   = None
+
+    while time.time() < deadline:
+        with fm._cam_lock:
+            raw = fm._cam_state.get("raw")
+
+        if raw is None:
+            time.sleep(0.1)
+            continue
+
+        bgr = cv2.cvtColor(raw, cv2.COLOR_RGB2BGR)
+
+        if vehicle_model is not None:
+            try:
+                results = vehicle_model(
+                    bgr, classes=_VEHICLE_CLASSES, conf=CONF_THRESH, verbose=False
+                )[0]
+                boxes = results.boxes
+                if boxes is not None and len(boxes) > 0:
+                    best_conf = float(boxes.conf.max().cpu())
+                    detected_count += 1
+                    push("waiting",
+                         f"Vehicle detected — hold still… ({detected_count}/{CONSEC_NEEDED})")
+                    if detected_count >= CONSEC_NEEDED:
+                        captured_bgr = bgr.copy()
+                        break
+                else:
+                    if detected_count > 0:
+                        push("waiting", "Scanning for vehicle…")
+                    detected_count = 0
+            except Exception as e:
+                push("info", f"Detection error: {e}")
+                detected_count = 0
+        else:
+            # No YOLO — wait briefly then capture whatever is in frame
+            time.sleep(2.0)
+            with fm._cam_lock:
+                raw = fm._cam_state.get("raw")
+            if raw is not None:
+                captured_bgr = cv2.cvtColor(raw, cv2.COLOR_RGB2BGR)
+            break
+
+        time.sleep(CHECK_INTERVAL)
+
+    if captured_bgr is None:
+        push("error", "No vehicle detected — try again or capture manually")
+        on_complete(None); end_vehicle_session(cid); return
+
+    # Save the captured frame
+    path = os.path.join(GATE_PHOTOS_DIR, f"vehicle_{cid}.jpg")
+    cv2.imwrite(path, captured_bgr)
+    temp_set(cid, "vehicle_photo", path)
+    push("ok", "Vehicle captured ✓")
+
+    # Run ANPR on the captured frame
+    push("step", "Detecting license plate…")
+    plate, log_lines = detect_plate_verbose(captured_bgr)
+    for line in log_lines:
+        push("info", line)
+    if plate:
+        push("ok", f"Plate detected: {plate}", plate=plate)
+    else:
+        push("warning", "No plate detected — enter manually", plate="")
+    temp_set(cid, "plate_number", plate or "")
+
+    push("success", "Analysis complete ✓",
+         vehicle_url=f"/gate/photo/vehicle_{cid}.jpg",
+         plate=plate or "")
+    on_complete(temp_get(cid))
+    end_vehicle_session(cid)
+
+
 def run_vehicle_capture(cid: str, on_complete):
     """Step 1 analysis: read the already-snapped vehicle photo → ANPR + colour via SSE."""
     def push(t, txt, **kw):
@@ -907,77 +1013,106 @@ def run_fp_entry(capture_id: str, on_complete, all_templates=None):
     sensor, err = fp_mgr._get_sensor()
     if not sensor:
         push("error", f"Sensor unavailable: {err}")
-        on_complete(None); fp_mgr.end_session(key); return
+        on_complete(None)
+        fp_mgr.end_session(key)
+        return
 
-    push("step", "Place finger on sensor…")
-    deadline = time.time() + 30
-    while True:
-        if time.time() > deadline:
-            push("error", "Timed out waiting for finger")
-            on_complete(None); fp_mgr.end_session(key); return
-        i = sensor.get_image()
-        if i == adafruit_fingerprint.OK:
-            push("ok", "Fingerprint image captured ✓"); break
-        elif i == adafruit_fingerprint.NOFINGER:
-            push("waiting", "Waiting…"); time.sleep(0.5)
-        else:
-            push("error", "Imaging error — try again")
-            on_complete(None); fp_mgr.end_session(key); return
+    # Flush stale bytes left over from any previous session
+    try:
+        if fp_mgr._uart:
+            fp_mgr._uart.reset_input_buffer()
+            fp_mgr._uart.reset_output_buffer()
+            time.sleep(0.15)
+    except Exception:
+        pass
 
-    if sensor.image_2_tz(1) != adafruit_fingerprint.OK:
-        push("error", "Could not process fingerprint")
-        on_complete(None); fp_mgr.end_session(key); return
+    try:
+        push("step", "Place finger on sensor…")
+        deadline = time.time() + 30
+        while True:
+            if time.time() > deadline:
+                push("error", "Timed out waiting for finger")
+                on_complete(None)
+                return
+            i = sensor.get_image()
+            if i == adafruit_fingerprint.OK:
+                push("ok", "Fingerprint image captured ✓")
+                break
+            elif i == adafruit_fingerprint.NOFINGER:
+                push("waiting", "Waiting…")
+                time.sleep(0.5)
+            else:
+                push("error", "Imaging error — try again")
+                on_complete(None)
+                return
 
-    data = sensor.get_fpdata(sensorbuffer="char", slot=1)
-    if not data:
-        push("error", "Failed to read template from sensor")
-        on_complete(None); fp_mgr.end_session(key); return
+        if sensor.image_2_tz(1) != adafruit_fingerprint.OK:
+            push("error", "Could not process fingerprint")
+            on_complete(None)
+            return
 
-    template = list(data)
-    temp_set(capture_id, "fingerprint_template", template)
+        # ── DB lookup FIRST while live template is still in CharBuffer1 ──────
+        # get_fpdata() communicates with the sensor and can disturb CharBuffer1,
+        # so we do all comparisons before downloading the template to Python.
+        if all_templates:
+            push("step", f"Searching database ({len(all_templates)} record(s))…")
+            best_entry, best_score = None, 0
+            for entry in all_templates:
+                try:
+                    if fp_mgr._uart:
+                        fp_mgr._uart.reset_input_buffer()
+                        fp_mgr._uart.reset_output_buffer()
+                        time.sleep(0.1)
+                    sensor.send_fpdata(entry["template"], sensorbuffer="char", slot=2)
+                    time.sleep(0.2)
+                    sensor.compare_templates()
+                    time.sleep(0.1)
+                    raw = sensor.confidence
+                    score = raw[0] if isinstance(raw, tuple) else (raw if raw is not None else 0)
+                    score = int(score)
+                    push("info", f"Checked {entry.get('name','?')}: score {score}")
+                    if score > best_score:
+                        best_score = score
+                        best_entry = entry
+                except Exception as ex:
+                    push("warning", f"Skipped {entry.get('name','?')}: {ex}")
+                    continue
 
-    # ── DB fingerprint lookup: compare buffer-1 template against all enrolled ──
-    if all_templates:
-        push("step", f"Searching database ({len(all_templates)} record(s))…")
-        best_entry, best_score = None, 0
-        for entry in all_templates:
-            try:
-                if hasattr(fp_mgr, '_uart') and fp_mgr._uart:
-                    fp_mgr._uart.reset_input_buffer()
-                    fp_mgr._uart.reset_output_buffer()
-                    time.sleep(0.08)
-                sensor.send_fpdata(entry["template"], sensorbuffer="char", slot=2)
-                time.sleep(0.15)
-                sensor.compare_templates()
-                raw = sensor.confidence
-                score = raw[0] if isinstance(raw, tuple) else (raw if raw is not None else 0)
-                score = int(score)
-                if score > best_score:
-                    best_score = score
-                    best_entry = entry
-            except Exception:
-                continue
+            if best_entry and best_score >= fp_mgr.CONFIDENCE_THRESHOLD:
+                push("db_match",
+                     f"Record found: {best_entry['name']} (score: {best_score})",
+                     holder_id=best_entry.get("holder_id"),
+                     name=best_entry.get("name", ""),
+                     score=best_score,
+                     date_of_birth=best_entry.get("date_of_birth"),
+                     blood_group=best_entry.get("blood_group"),
+                     license_number=best_entry.get("license_number"),
+                     license_class=best_entry.get("license_class"),
+                     expiry_date=best_entry.get("expiry_date"),
+                     photo_url=best_entry.get("photo_url"),
+                     match_method="fingerprint")
+            else:
+                push("db_notfound",
+                     f"No matching record found in database (best score: {best_score})")
 
-        if best_entry and best_score >= fp_mgr.CONFIDENCE_THRESHOLD:
-            push("db_match",
-                 f"Record found: {best_entry['name']} (score: {best_score})",
-                 holder_id=best_entry.get("holder_id"),
-                 name=best_entry.get("name", ""),
-                 score=best_score,
-                 date_of_birth=best_entry.get("date_of_birth"),
-                 blood_group=best_entry.get("blood_group"),
-                 license_number=best_entry.get("license_number"),
-                 license_class=best_entry.get("license_class"),
-                 expiry_date=best_entry.get("expiry_date"),
-                 photo_url=best_entry.get("photo_url"),
-                 match_method="fingerprint")
-        else:
-            push("db_notfound",
-                 f"No matching record found in database (best score: {best_score})")
+        # ── Download template AFTER comparisons are done ─────────────────────
+        data = sensor.get_fpdata(sensorbuffer="char", slot=1)
+        if not data:
+            push("error", "Failed to read template from sensor")
+            on_complete(None)
+            return
 
-    push("success", f"Fingerprint captured ({len(template)} bytes) ✓")
-    on_complete(template)
-    fp_mgr.end_session(key)
+        template = list(data)
+        temp_set(capture_id, "fingerprint_template", template)
+
+        push("success", f"Fingerprint captured ({len(template)} bytes) ✓")
+        on_complete(template)
+
+    except Exception as exc:
+        push("error", f"Sensor error — please try again ({exc})")
+        on_complete(None)
+    finally:
+        fp_mgr.end_session(key)
 
 
 # ── FINGERPRINT VERIFY (EXIT) ────────────────────────────────────────────────
