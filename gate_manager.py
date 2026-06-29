@@ -267,9 +267,14 @@ def _get_ocr():
     return _ocr_reader
 
 
+def warm_up_ocr():
+    """Pre-load EasyOCR in a background thread so the first plate scan is instant."""
+    threading.Thread(target=_get_ocr, daemon=True).start()
+
+
 def _ocr_plate_crop(reader, bgr_crop) -> list:
     """
-    OCR a plate crop. Upscales if small, tries CLAHE + sharpen + Otsu + binary-inverse variants.
+    OCR a plate crop. Runs CLAHE-enhanced + sharpened variants (2 passes max).
     Returns list of (_, text, conf) tuples.
     """
     ch, cw = bgr_crop.shape[:2]
@@ -282,26 +287,35 @@ def _ocr_plate_crop(reader, bgr_crop) -> list:
 
     clahe    = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
     enhanced = clahe.apply(gray)
-    variants = [enhanced]
 
-    if NUMPY_AVAILABLE:
+    out  = []
+    seen = set()
+
+    # Pass 1: CLAHE-enhanced
+    try:
+        for det in reader.readtext(
+            enhanced,
+            allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
+            paragraph=False,
+        ):
+            key = det[1].upper()
+            if key not in seen:
+                seen.add(key)
+                out.append(det)
+    except Exception:
+        pass
+
+    # Pass 2: sharpened — only if pass 1 gave no confident plate candidates
+    already_good = any(
+        conf > 0.6 and len(re.sub(r'[^A-Z0-9]', '', t.upper())) >= 6
+        for (_, t, conf) in out
+    )
+    if not already_good and NUMPY_AVAILABLE:
         k     = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
         sharp = cv2.filter2D(enhanced, -1, k)
-        variants.append(sharp)
-
-    _, thresh = cv2.threshold(enhanced, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
-    variants.append(thresh)
-
-    # Binary-inverse at fixed threshold (same as reference ANPR repo — dark text on light plate)
-    _, thresh_inv = cv2.threshold(gray, 64, 255, cv2.THRESH_BINARY_INV)
-    variants.append(thresh_inv)
-
-    out = []
-    seen = set()
-    for img in variants:
         try:
             for det in reader.readtext(
-                img,
+                sharp,
                 allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
                 paragraph=False,
             ):
@@ -311,6 +325,7 @@ def _ocr_plate_crop(reader, bgr_crop) -> list:
                     out.append(det)
         except Exception:
             pass
+
     return out
 
 
@@ -339,9 +354,9 @@ def detect_plate_verbose(frame_bgr) -> tuple:
     """
     YOLO-first ANPR pipeline for Nigerian plates.
 
-    1. YOLO detects plate bounding boxes → OCR each crop.
-       Character-correction maps fix common OCR errors (O↔0, I↔1, S↔5 …).
-    2. Falls back to multi-region OCR scan if YOLO not available or finds nothing.
+    1. Resize frame to ≤640px wide before YOLO (faster inference, same accuracy).
+    2. YOLO plate detector → OCR top-3 crops (1–2 OCR passes each).
+    3. Fallback: lower-half + strip OCR scan if YOLO finds nothing.
 
     Returns (plate_string, log_lines).
     """
@@ -351,61 +366,53 @@ def detect_plate_verbose(frame_bgr) -> tuple:
     if reader is None:
         return '', ['OCR reader unavailable']
 
-    h, w   = frame_bgr.shape[:2]
-    hits   = []          # log lines
-    cands  = []          # (score, plate) candidates
+    hits  = []
+    cands = []
 
-    # ── PASS 0: vehicle crop (yolov8n) to reduce background noise ────────────
-    # Mirrors the reference ANPR repo: detect vehicle body first, then find plate inside it.
-    vehicle_crop, vehicle_bbox = detect_vehicle_crop(frame_bgr)
-    if vehicle_bbox is not None:
-        hits.append(f"Vehicle body detected — searching plate within crop")
-    search_frames = []
-    if vehicle_bbox is not None:
-        search_frames.append(('vehicle_crop', vehicle_crop))
-    search_frames.append(('full_frame', frame_bgr))
+    # Pre-resize to max 640px wide — speeds up YOLO inference significantly
+    h, w  = frame_bgr.shape[:2]
+    if w > 640:
+        scale      = 640 / w
+        work_frame = cv2.resize(frame_bgr, (640, int(h * scale)), interpolation=cv2.INTER_AREA)
+    else:
+        work_frame = frame_bgr
+    fh, fw = work_frame.shape[:2]
 
-    # ── PASS 1: YOLO plate detector ──────────────────────────────────────────
+    # ── PASS 1: YOLO plate detector on the resized frame ─────────────────────
     model = _get_plate_yolo()
     if model is not None:
-        for frame_label, search_frame in search_frames:
-            fh, fw = search_frame.shape[:2]
-            try:
-                results = model(search_frame, conf=0.20, verbose=False)[0]
-                boxes   = results.boxes
-                if boxes is not None and len(boxes):
-                    order = boxes.conf.cpu().numpy().argsort()[::-1]
-                    hits.append(f"YOLO [{frame_label}]: {len(boxes)} plate region(s) detected")
-                    for i in order[:5]:
-                        x1, y1, x2, y2 = boxes.xyxy[i].cpu().numpy().astype(int)
-                        yconf = float(boxes.conf[i])
-                        pad = 5
-                        x1c = max(0, x1-pad); y1c = max(0, y1-pad)
-                        x2c = min(fw, x2+pad); y2c = min(fh, y2+pad)
-                        crop = search_frame[y1c:y2c, x1c:x2c]
-                        ocr_res = _ocr_plate_crop(reader, crop)
-                        for (_, text, oconf) in ocr_res:
-                            clean = re.sub(r'[^A-Z0-9]', '', text.upper())
-                            if clean:
-                                hits.append(f"  OCR: {clean!r} conf={oconf:.2f} yolo={yconf:.2f}")
-                        cands.extend(_ocr_hits_to_candidates(ocr_res, yolo_conf=yconf))
-                else:
-                    hits.append(f"YOLO [{frame_label}]: no plate regions found")
-            except Exception as e:
-                hits.append(f"YOLO error [{frame_label}]: {e}")
-            # If we already found strong candidates from vehicle crop, skip full frame
-            if frame_label == 'vehicle_crop' and any(s > 0.7 for s, _ in cands):
-                hits.append("Strong candidates from vehicle crop — skipping full frame scan")
-                break
+        try:
+            results = model(work_frame, conf=0.20, verbose=False)[0]
+            boxes   = results.boxes
+            if boxes is not None and len(boxes):
+                order = boxes.conf.cpu().numpy().argsort()[::-1]
+                hits.append(f"YOLO: {len(boxes)} plate region(s) detected")
+                for i in order[:3]:          # top-3 boxes by confidence
+                    x1, y1, x2, y2 = boxes.xyxy[i].cpu().numpy().astype(int)
+                    yconf = float(boxes.conf[i])
+                    pad   = 5
+                    crop  = work_frame[max(0, y1-pad):min(fh, y2+pad),
+                                       max(0, x1-pad):min(fw, x2+pad)]
+                    ocr_res = _ocr_plate_crop(reader, crop)
+                    for (_, text, oconf) in ocr_res:
+                        clean = re.sub(r'[^A-Z0-9]', '', text.upper())
+                        if clean:
+                            hits.append(f"  OCR: {clean!r} conf={oconf:.2f} yolo={yconf:.2f}")
+                    cands.extend(_ocr_hits_to_candidates(ocr_res, yolo_conf=yconf))
+            else:
+                hits.append("YOLO: no plate regions found")
+        except Exception as e:
+            hits.append(f"YOLO error: {e}")
     else:
-        hits.append("YOLO model not loaded — using OCR scan")
+        hits.append("YOLO model not loaded — using OCR fallback")
 
     if cands:
         cands.sort(reverse=True)
         return cands[0][1], hits
 
-    # ── PASS 2: multi-region OCR fallback ────────────────────────────────────
-    hits.append("Running multi-region OCR scan…")
+    # ── PASS 2: OCR fallback — lower half + middle strip only ────────────────
+    # Plates are almost always in the lower portion of the frame.
+    hits.append("Running OCR fallback scan…")
 
     def _scan(bgr_crop, label):
         ocr_res = _ocr_plate_crop(reader, bgr_crop)
@@ -415,31 +422,8 @@ def detect_plate_verbose(frame_bgr) -> tuple:
                 hits.append(f"  [{label}] {clean!r} conf={conf:.2f}")
         cands.extend(_ocr_hits_to_candidates(ocr_res))
 
-    _scan(frame_bgr, 'full')
-    _scan(frame_bgr[h // 2:, :], 'lower-half')
-    _scan(frame_bgr[int(h * 0.55):int(h * 0.90), :], 'strip')
-    _scan(frame_bgr[:h // 2, :], 'upper-half')
-
-    # Contour-based plate region detection
-    try:
-        gray  = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2GRAY)
-        blur  = cv2.bilateralFilter(gray, 11, 17, 17)
-        edges = cv2.Canny(blur, 30, 200)
-        cnts, _ = cv2.findContours(edges, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        cnts = sorted(cnts, key=cv2.contourArea, reverse=True)[:25]
-        for c in cnts:
-            peri   = cv2.arcLength(c, True)
-            approx = cv2.approxPolyDP(c, 0.018 * peri, True)
-            if len(approx) == 4:
-                x, y, bw, bh = cv2.boundingRect(approx)
-                ar = bw / bh if bh > 0 else 0
-                if 1.8 < ar < 7.0 and bw > 50 and bh > 12:
-                    pad = 6
-                    crop = frame_bgr[max(0, y-pad):min(h, y+bh+pad),
-                                     max(0, x-pad):min(w, x+bw+pad)]
-                    _scan(crop, 'contour')
-    except Exception:
-        pass
+    _scan(work_frame[fh // 2:, :],                         'lower-half')
+    _scan(work_frame[int(fh * 0.55):int(fh * 0.90), :],   'strip')
 
     if not cands:
         return '', hits

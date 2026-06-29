@@ -988,4 +988,6 @@ def inject_now():
 
 
 if __name__ == "__main__":
+    # Pre-load EasyOCR in the background so the first plate scan doesn't stall
+    gm.warm_up_ocr()
     app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False, threaded=True)
