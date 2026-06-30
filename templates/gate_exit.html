@@ -265,6 +265,52 @@
         </div>
     </div>
 
+    <!-- OTP PASSCODE — delegate exit -->
+    <div class="card" id="card-otp" style="opacity:.45;pointer-events:none;">
+        <div class="step-header">
+            <div class="step-num" id="num-otp">
+                <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                    <rect x="3" y="11" width="18" height="11" rx="2"/>
+                    <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
+                </svg>
+            </div>
+            <div class="step-label" id="lbl-otp">Passcode — Delegate Exit</div>
+        </div>
+        <div class="step-body">
+            <div style="font-size:12px;color:var(--text-mute);margin-bottom:10px;">
+                Enter the passcode the driver set at entry. A face photo will be captured for audit.
+            </div>
+            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+                <input id="otp-input" type="text" inputmode="numeric" maxlength="8"
+                       placeholder="Driver's code"
+                       style="font-family:'DM Mono',monospace;font-size:15px;letter-spacing:2px;
+                              width:170px;text-align:center;padding:8px 10px;">
+                <button id="btn-otp-verify" class="btn btn-gold btn-sm" onclick="verifyOTP()">
+                    Verify Passcode
+                </button>
+            </div>
+            <div id="otp-status" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
+
+            <!-- Audit face capture — shown after OTP is accepted -->
+            <div id="otp-face-panel" style="display:none;">
+                <div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
+                    Capturing exit face for audit record…
+                </div>
+                <div class="photo-box" style="width:100%;height:130px;margin-bottom:6px;background:#000;">
+                    <img id="otp-face-stream" src="" style="display:none;width:100%;height:100%;object-fit:contain;">
+                    <img id="otp-face-photo" src="" style="display:none;width:100%;height:100%;object-fit:cover;">
+                    <div id="otp-face-ph" class="photo-placeholder">
+                        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"
+                             viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/>
+                            <path d="M9 12a5 5 0 0 0-5 5v1h16v-1a5 5 0 0 0-5-5"/></svg>
+                        <span style="font-size:9px;color:var(--text-mute);">Scanning…</span>
+                    </div>
+                </div>
+                <div id="otp-face-status" style="font-size:11px;color:var(--text-mute);"></div>
+            </div>
+        </div>
+    </div>
+
 </div>
 </div>
 
@@ -296,6 +342,140 @@ function activateStep(n) {
     card.style.pointerEvents = '';
     document.getElementById('num-' + n).className = 'step-num active';
     document.getElementById('lbl-' + n).className = 'step-label active';
+}
+
+function activateOTP() {
+    const card = document.getElementById('card-otp');
+    card.style.opacity       = '1';
+    card.style.pointerEvents = '';
+    document.getElementById('num-otp').className = 'step-num active';
+    document.getElementById('lbl-otp').className = 'step-label active';
+}
+
+// ── OTP PASSCODE EXIT ─────────────────────────────────────────────────────────
+
+function verifyOTP() {
+    const code     = document.getElementById('otp-input').value.trim();
+    const statusEl = document.getElementById('otp-status');
+    if (!currentTripId) {
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = 'Look up the vehicle plate first.';
+        return;
+    }
+    if (!/^\d{4,8}$/.test(code)) {
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = 'Enter a 4–8 digit passcode.';
+        return;
+    }
+    statusEl.style.color = 'var(--text-mute)';
+    statusEl.textContent = 'Verifying…';
+    document.getElementById('btn-otp-verify').disabled = true;
+
+    fetch('/gate/exit/otp/verify', {
+        method: 'POST',
+        headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({trip_id: currentTripId, code}),
+    }).then(r => r.json()).then(d => {
+        if (!d.valid) {
+            statusEl.style.color = 'var(--red)';
+            statusEl.textContent = d.error || 'Incorrect passcode.';
+            document.getElementById('btn-otp-verify').disabled = false;
+            return;
+        }
+        statusEl.style.color = 'var(--green)';
+        statusEl.textContent = 'Passcode accepted ✓ — capturing audit photo…';
+        document.getElementById('num-otp').className = 'step-num done';
+        document.getElementById('num-otp').innerHTML = '✓';
+        document.getElementById('lbl-otp').className = 'step-label done';
+        log('ok', 'Passcode verified — capturing exit face for audit');
+        document.getElementById('otp-face-panel').style.display = '';
+        startOTPFaceCapture();
+    }).catch(() => {
+        statusEl.style.color = 'var(--red)';
+        statusEl.textContent = 'Network error — try again.';
+        document.getElementById('btn-otp-verify').disabled = false;
+    });
+}
+
+function startOTPFaceCapture() {
+    const stream = document.getElementById('otp-face-stream');
+    document.getElementById('otp-face-ph').style.display = 'none';
+    stream.src = '/gate/video-feed';
+    stream.style.display = '';
+
+    fetch('/gate/entry/face/start', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({capture_id: CAPTURE_ID}),
+    }).then(r => r.json()).then(d => {
+        if (d.error) {
+            stream.src = ''; stream.style.display = 'none';
+            document.getElementById('otp-face-ph').style.display = '';
+            document.getElementById('otp-face-status').textContent =
+                'Camera unavailable — granting exit without audit photo.';
+            log('warning', 'Face capture unavailable — OTP exit without audit photo');
+            grantOTPExit(null);
+            return;
+        }
+
+        const es = new EventSource('/gate/entry/face/stream/' + CAPTURE_ID);
+        es.onmessage = e => {
+            const msg = JSON.parse(e.data);
+            if (msg.face_url) {
+                stream.src = ''; stream.style.display = 'none';
+                const photo = document.getElementById('otp-face-photo');
+                photo.src = msg.face_url; photo.style.display = '';
+                document.getElementById('otp-face-ph').style.display = 'none';
+                // Mirror in the entry record "Exit Capture" slot
+                const exitImg = document.getElementById('exit-face');
+                exitImg.src = msg.face_url; exitImg.style.display = '';
+                document.getElementById('exit-face-ph').style.display = 'none';
+                exitPhotoPath = 'gate_photos/' + msg.face_url.split('/').pop();
+            }
+            if (msg.type === 'success' || msg.type === 'db_match' || msg.type === 'db_notfound') {
+                es.close();
+                document.getElementById('otp-face-status').textContent = 'Audit photo captured ✓';
+                log('ok', 'Exit audit photo saved');
+                grantOTPExit(exitPhotoPath);
+            }
+            if (msg.type === 'error') {
+                es.close();
+                stream.src = ''; stream.style.display = 'none';
+                document.getElementById('otp-face-status').textContent =
+                    'No face detected — granting exit without audit photo.';
+                log('warning', 'No face at exit — passcode exit without photo');
+                grantOTPExit(null);
+            }
+        };
+        es.onerror = () => { es.close(); grantOTPExit(null); };
+    });
+}
+
+function grantOTPExit(facePhotoPath) {
+    if (driverInDB) return;   // guard against double-fire
+    driverInDB = true;
+    document.getElementById('step-hint').textContent = 'Delegate exit confirmed — logging…';
+    const banner = document.getElementById('granted-banner');
+    document.getElementById('granted-name').textContent = 'Delegate exit via passcode';
+    banner.style.display = '';
+    banner.scrollIntoView({behavior:'smooth', block:'nearest'});
+
+    fetch('/gate/exit/confirm', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({
+            trip_id:         currentTripId,
+            decision:        'GRANTED',
+            face_distance:   null,
+            exit_photo_path: facePhotoPath,
+        }),
+    }).then(r => r.json()).then(d => {
+        if (d.ok) {
+            setTimeout(() => { window.location.href = '/gate/trips'; }, 1400);
+        } else {
+            log('error', d.error || 'Failed to log exit.');
+            banner.style.display = 'none';
+            driverInDB = false;
+        }
+    });
 }
 
 function setStatus(id, txt) {
@@ -446,7 +626,7 @@ function startAutoDetect() {
     document.getElementById('log-body').innerHTML                = '';
     document.getElementById('log-card').style.display            = 'none';
     // Lock identity steps
-    ['card-step2','card-step3'].forEach(id => {
+    ['card-step2','card-step3','card-otp'].forEach(id => {
         const c = document.getElementById(id);
         c.style.opacity = '.45'; c.style.pointerEvents = 'none';
     });
@@ -454,6 +634,13 @@ function startAutoDetect() {
         document.getElementById('num-'+n).className = 'step-num';
         document.getElementById('lbl-'+n).className = 'step-label';
     });
+    document.getElementById('num-otp').className  = 'step-num';
+    document.getElementById('lbl-otp').className  = 'step-label';
+    document.getElementById('num-otp').innerHTML  = '<svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
+    document.getElementById('otp-input').value    = '';
+    document.getElementById('otp-status').textContent = '';
+    document.getElementById('otp-face-panel').style.display = 'none';
+    document.getElementById('btn-otp-verify').disabled = false;
 
     setStatus('v1', 'Detecting…');
     showVehicleStream();
@@ -566,11 +753,12 @@ function lookupTrip(plate) {
             document.getElementById('trip-record-card').style.display = '';
             log('ok', 'Trip found — ' + d.plate + ' entered ' + (d.entry_time || '').slice(0, 16));
 
-            // Activate BOTH face and fingerprint steps simultaneously
+            // Activate face, fingerprint, and OTP steps simultaneously
             activateStep(2);
             activateStep(3);
+            activateOTP();
             document.getElementById('step-hint').textContent =
-                'Trip found. Scan face or fingerprint to verify driver and grant exit.';
+                'Trip found. Scan face, fingerprint, or enter passcode to grant exit.';
         });
 }
 

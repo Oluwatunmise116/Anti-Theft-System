@@ -242,6 +242,17 @@
     <!-- CONFIRM -->
     <div class="card">
         <div class="form-group" style="margin-bottom:10px;">
+            <label>
+                Entry Passcode
+                <span style="font-size:10px;color:var(--text-mute);font-weight:400;margin-left:4px;">
+                    optional — driver sets their own code for delegate exits
+                </span>
+            </label>
+            <input id="passcode-input" type="text" inputmode="numeric" maxlength="4"
+                   placeholder="e.g. 1234  (4 digit Passcode)"
+                   style="font-family:'DM Mono',monospace;font: size 15px;px;letter-spacing:2px;">
+        </div>
+        <div class="form-group" style="margin-bottom:10px;">
             <label>Notes</label>
             <input id="notes-input" type="text" placeholder="Optional…">
         </div>
@@ -674,6 +685,7 @@ function confirmEntry() {
             capture_id: CAPTURE_ID,
             plate:      plate,
             notes:      document.getElementById('notes-input').value,
+            passcode:   document.getElementById('passcode-input').value.trim() || null,
         }),
     }).then(r => r.json()).then(d => {
         if (d.ok) {

@@ -108,10 +108,17 @@ def init_db():
             notes                TEXT
         );
 
+        DROP TABLE IF EXISTS driver_otps;
         DROP TABLE IF EXISTS vehicle_driver_bindings;
         DROP TABLE IF EXISTS vehicles;
     """)
     conn.commit()
+    # Add passcode column to trips (idempotent migration)
+    try:
+        c.execute("ALTER TABLE trips ADD COLUMN passcode TEXT")
+        conn.commit()
+    except Exception:
+        pass
     conn.close()
 
 
@@ -563,6 +570,34 @@ def clear_all_trips():
                 except Exception:
                     pass
     return deleted
+
+
+# ── TRIP PASSCODE ─────────────────────────────────────────────────────────────
+
+def set_trip_passcode(trip_id, code):
+    """Store the driver-chosen passcode on an open trip."""
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("UPDATE trips SET passcode=? WHERE id=? AND status='INSIDE'", (code, trip_id))
+    affected = c.rowcount
+    conn.commit()
+    conn.close()
+    return affected > 0
+
+
+def verify_trip_passcode(trip_id, code):
+    """
+    Check the passcode against an open trip. Returns True on match, False otherwise.
+    No expiry — valid as long as the trip is INSIDE.
+    """
+    conn = get_connection()
+    c = conn.cursor()
+    c.execute("SELECT passcode FROM trips WHERE id=? AND status='INSIDE'", (trip_id,))
+    row = c.fetchone()
+    conn.close()
+    if not row or not row["passcode"]:
+        return False
+    return row["passcode"] == code
 
 
 init_db()

@@ -768,6 +768,12 @@ def gate_entry_confirm():
         db.update_trip_photos(trip_id, new_vehicle_path, new_face_path)
 
     gm.temp_clear(cid)
+
+    # Store driver-set passcode if provided
+    passcode = data.get("passcode", "").strip()
+    if passcode and passcode.isdigit() and 4 <= len(passcode) <= 8:
+        db.set_trip_passcode(trip_id, passcode)
+
     return jsonify({"ok": True, "trip_id": trip_id, "plate": plate})
 
 
@@ -909,6 +915,22 @@ def gate_trip_delete(trip_id):
 def gate_photo(filename):
     photos_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gate_photos")
     return send_from_directory(photos_dir, filename)
+
+
+# ── TRIP PASSCODE ──────────────────────────────────────
+
+@app.route("/gate/exit/otp/verify", methods=["POST"])
+def gate_exit_otp_verify():
+    data    = request.json or {}
+    trip_id = data.get("trip_id")
+    code    = str(data.get("code", "")).strip()
+    if not trip_id:
+        return jsonify({"valid": False, "error": "trip_id required"}), 400
+    if not code or not code.isdigit() or not (4 <= len(code) <= 8):
+        return jsonify({"valid": False, "error": "Enter a 4–8 digit passcode"}), 400
+    if not db.verify_trip_passcode(int(trip_id), code):
+        return jsonify({"valid": False, "error": "Incorrect passcode"}), 400
+    return jsonify({"valid": True})
 
 
 # ── SETTINGS ───────────────────────────────────────────
