@@ -96,67 +96,6 @@
         </div>
     </div>
 
-    <!-- Person record (shows when driver is identified) -->
-    <div class="card" id="card-person" style="display:none;">
-        <div class="step-header">
-            <div class="step-num done"
-                 style="background:var(--blue,#3b82f6);border-color:var(--blue,#3b82f6);color:#fff;">
-                <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
-                    <circle cx="9" cy="7" r="4"/>
-                </svg>
-            </div>
-            <div class="step-label active">Database Record</div>
-            <span id="person-badge" class="badge" style="margin-left:auto;font-size:10.5px;"></span>
-        </div>
-        <div class="step-body">
-            <div id="person-loading" style="display:none;padding:6px 0;font-size:12px;color:var(--text-mute);">
-                Searching database…
-            </div>
-            <div id="person-match" style="display:none;">
-                <div style="display:flex;gap:12px;align-items:flex-start;">
-                    <div class="photo-box" style="width:62px;height:78px;flex-shrink:0;">
-                        <img id="person-photo" src="" style="display:none;width:100%;height:100%;object-fit:cover;border-radius:5px;">
-                        <div id="person-photo-ph" class="photo-placeholder">
-                            <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.5"
-                                 viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/>
-                                <path d="M9 12a5 5 0 0 0-5 5v1h16v-1a5 5 0 0 0-5-5"/></svg>
-                        </div>
-                    </div>
-                    <div style="flex:1;min-width:0;">
-                        <div id="person-name" style="font-size:13.5px;font-weight:700;margin-bottom:8px;color:var(--text);"></div>
-                        <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 10px;">
-                            <div>
-                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">License No.</div>
-                                <div id="person-license" class="mono" style="font-size:11.5px;color:var(--text-dim);letter-spacing:1px;"></div>
-                            </div>
-                            <div>
-                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Class</div>
-                                <div id="person-class" style="font-size:11.5px;color:var(--text-dim);"></div>
-                            </div>
-                            <div>
-                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Expiry</div>
-                                <div id="person-expiry" class="mono" style="font-size:11.5px;"></div>
-                            </div>
-                            <div>
-                                <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;margin-bottom:2px;">Blood Group</div>
-                                <div id="person-blood" style="font-size:12px;font-weight:700;color:var(--red,#ef4444);"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </div>
-            <div id="person-notfound" style="display:none;padding:10px 0;text-align:center;">
-                <svg width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24"
-                     style="color:var(--text-mute);display:block;margin:0 auto 6px;">
-                    <circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/>
-                </svg>
-                <div style="font-size:12.5px;font-weight:600;color:var(--text-dim);">Not in database</div>
-                <div style="font-size:11px;color:var(--text-mute);margin-top:2px;">Try the other verification method.</div>
-            </div>
-        </div>
-    </div>
-
     <!-- Analysis log -->
     <div class="card" id="log-card" style="display:none;">
         <div class="card-header" style="margin-bottom:10px;">
@@ -320,7 +259,7 @@ const CAPTURE_ID = "{{ capture_id }}";
 // ── State ─────────────────────────────────────────────────────────────────────
 let step1Done     = false;
 let tripFound     = false;
-let driverInDB    = false;   // db_match received from face or FP
+let exitGranted   = false;   // a server-verified exit authorization has been consumed
 let faceBusy      = false;
 let currentTripId = null;
 let exitPhotoPath = null;    // saved when face is captured
@@ -413,7 +352,7 @@ function startOTPFaceCapture() {
             document.getElementById('otp-face-status').textContent =
                 'Camera unavailable — granting exit without audit photo.';
             log('warning', 'Face capture unavailable — OTP exit without audit photo');
-            grantOTPExit(null);
+            grantExit('Delegate exit via passcode', null);
             return;
         }
 
@@ -435,7 +374,7 @@ function startOTPFaceCapture() {
                 es.close();
                 document.getElementById('otp-face-status').textContent = 'Audit photo captured ✓';
                 log('ok', 'Exit audit photo saved');
-                grantOTPExit(exitPhotoPath);
+                grantExit('Delegate exit via passcode', exitPhotoPath);
             }
             if (msg.type === 'error') {
                 es.close();
@@ -443,38 +382,10 @@ function startOTPFaceCapture() {
                 document.getElementById('otp-face-status').textContent =
                     'No face detected — granting exit without audit photo.';
                 log('warning', 'No face at exit — passcode exit without photo');
-                grantOTPExit(null);
+                grantExit('Delegate exit via passcode', null);
             }
         };
-        es.onerror = () => { es.close(); grantOTPExit(null); };
-    });
-}
-
-function grantOTPExit(facePhotoPath) {
-    if (driverInDB) return;   // guard against double-fire
-    driverInDB = true;
-    document.getElementById('step-hint').textContent = 'Delegate exit confirmed — logging…';
-    const banner = document.getElementById('granted-banner');
-    document.getElementById('granted-name').textContent = 'Delegate exit via passcode';
-    banner.style.display = '';
-    banner.scrollIntoView({behavior:'smooth', block:'nearest'});
-
-    fetch('/gate/exit/confirm', {
-        method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            trip_id:         currentTripId,
-            decision:        'GRANTED',
-            face_distance:   null,
-            exit_photo_path: facePhotoPath,
-        }),
-    }).then(r => r.json()).then(d => {
-        if (d.ok) {
-            setTimeout(() => { window.location.href = '/gate/trips'; }, 1400);
-        } else {
-            log('error', d.error || 'Failed to log exit.');
-            banner.style.display = 'none';
-            driverInDB = false;
-        }
+        es.onerror = () => { es.close(); grantExit('Delegate exit via passcode', null); };
     });
 }
 
@@ -498,62 +409,19 @@ function log(type, text) {
     body.scrollTop = body.scrollHeight;
 }
 
-// ── PERSON RECORD HELPERS ─────────────────────────────────────────────────────
+// ── GRANT EXIT: called only after a server-side exit authorization exists ─────
+// (face/fingerprint matched against THIS trip's own stored biometric, or a
+// passcode verified against THIS trip's own passcode). /gate/exit/confirm
+// re-checks this server-side and will reject if no authorization is on file,
+// so this is UX, not the actual security boundary.
 
-function personLookupStart() {
-    const card = document.getElementById('card-person');
-    card.style.display = '';
-    document.getElementById('person-loading').style.display  = '';
-    document.getElementById('person-match').style.display    = 'none';
-    document.getElementById('person-notfound').style.display = 'none';
-    document.getElementById('person-badge').className        = '';
-    document.getElementById('person-badge').textContent      = '';
-}
-
-function showPersonRecord(msg) {
-    document.getElementById('person-loading').style.display  = 'none';
-    document.getElementById('person-notfound').style.display = 'none';
-    document.getElementById('person-match').style.display    = '';
-    const method = msg.match_method === 'fingerprint' ? 'Fingerprint' : 'Face';
-    const badge  = document.getElementById('person-badge');
-    badge.className = 'badge badge-green';
-    badge.innerHTML = `<span class="dot"></span>${method} Match`;
-    document.getElementById('person-name').textContent    = msg.name          || '—';
-    document.getElementById('person-license').textContent = msg.license_number|| '—';
-    document.getElementById('person-class').textContent   = msg.license_class || '—';
-    document.getElementById('person-blood').textContent   = msg.blood_group   || '—';
-    const expiryEl = document.getElementById('person-expiry');
-    expiryEl.textContent = msg.expiry_date || '—';
-    expiryEl.style.color = msg.expiry_date && msg.expiry_date < new Date().toISOString().slice(0,10)
-        ? 'var(--red)' : 'var(--text-dim)';
-    const img = document.getElementById('person-photo');
-    const ph  = document.getElementById('person-photo-ph');
-    if (msg.photo_url) {
-        img.src = msg.photo_url; img.style.display = ''; ph.style.display = 'none';
-    } else {
-        img.style.display = 'none'; ph.style.display = '';
-    }
-    document.getElementById('card-person').scrollIntoView({behavior:'smooth', block:'nearest'});
-}
-
-function showPersonNotFound() {
-    document.getElementById('person-loading').style.display  = 'none';
-    document.getElementById('person-match').style.display    = 'none';
-    document.getElementById('person-notfound').style.display = '';
-    const badge = document.getElementById('person-badge');
-    badge.className = 'badge badge-red';
-    badge.innerHTML = '<span class="dot"></span>Not Found';
-}
-
-// ── AUTO-GRANT: called when db_match is received ──────────────────────────────
-
-function autoGrantExit(driverName) {
-    if (driverInDB) return;   // guard against double-fire (face + FP both match)
-    driverInDB = true;
+function grantExit(label, photoPath) {
+    if (exitGranted) return;   // guard against double-fire (face + FP both match)
+    exitGranted = true;
 
     document.getElementById('step-hint').textContent = 'Driver verified — logging exit…';
     const banner = document.getElementById('granted-banner');
-    document.getElementById('granted-name').textContent = driverName || '';
+    document.getElementById('granted-name').textContent = label || '';
     banner.style.display = '';
     banner.scrollIntoView({behavior:'smooth', block:'nearest'});
 
@@ -561,9 +429,7 @@ function autoGrantExit(driverName) {
         method: 'POST', headers: {'Content-Type': 'application/json'},
         body: JSON.stringify({
             trip_id:         currentTripId,
-            decision:        'GRANTED',
-            face_distance:   null,
-            exit_photo_path: exitPhotoPath,
+            exit_photo_path: photoPath,
         }),
     }).then(r => r.json()).then(d => {
         if (d.ok) {
@@ -571,7 +437,7 @@ function autoGrantExit(driverName) {
         } else {
             log('error', d.error || 'Failed to log exit.');
             document.getElementById('granted-banner').style.display = 'none';
-            driverInDB = false;
+            exitGranted = false;
         }
     });
 }
@@ -611,7 +477,7 @@ function setDetectOverlay(text) {
 
 function startAutoDetect() {
     if (document.getElementById('btn-auto').disabled) return;
-    step1Done = false; tripFound = false; driverInDB = false; exitPhotoPath = null;
+    step1Done = false; tripFound = false; exitGranted = false; exitPhotoPath = null;
     currentTripId = null;
 
     // Reset UI
@@ -621,7 +487,6 @@ function startAutoDetect() {
     document.getElementById('plate-input').value                 = '';
     document.getElementById('lookup-msg').style.display          = 'none';
     document.getElementById('trip-record-card').style.display    = 'none';
-    document.getElementById('card-person').style.display         = 'none';
     document.getElementById('granted-banner').style.display      = 'none';
     document.getElementById('log-body').innerHTML                = '';
     document.getElementById('log-card').style.display            = 'none';
@@ -765,18 +630,19 @@ function lookupTrip(plate) {
 // ── STEP 2: FACE RECOGNITION ──────────────────────────────────────────────────
 
 function startFaceScan() {
-    if (faceBusy || !tripFound) return;
+    if (faceBusy || !tripFound || !currentTripId) return;
     faceBusy = true;
     document.getElementById('btn-face').disabled = true;
     setStatus('v2', 'Capturing…');
     document.getElementById('step-hint').textContent =
         'Camera live — position driver\'s face in frame…';
-    if (!driverInDB) personLookupStart();
     startFaceStream();
 
-    fetch('/gate/entry/face/start', {
+    // Trip-bound verify: compares the live capture against THIS trip's own
+    // stored face_encoding — never a general holders-database search.
+    fetch('/gate/exit/verify/start', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({capture_id: CAPTURE_ID}),
+        body: JSON.stringify({trip_id: currentTripId}),
     }).then(r => r.json()).then(d => {
         if (d.error) {
             log('error', d.error);
@@ -787,44 +653,36 @@ function startFaceScan() {
             return;
         }
 
-        const es = new EventSource('/gate/entry/face/stream/' + CAPTURE_ID);
+        const es = new EventSource('/gate/exit/verify/stream/' + currentTripId);
         es.onmessage = e => {
             const msg = JSON.parse(e.data);
             log(msg.type, msg.text);
 
-            if (msg.face_url) {
-                stopFaceStream();
-                const faceImg = document.getElementById('face-photo');
-                faceImg.src = msg.face_url; faceImg.style.display = '';
-                document.getElementById('face-ph').style.display = 'none';
-                // Derive file path from URL for the exit record
-                exitPhotoPath = 'gate_photos/' + msg.face_url.split('/').pop();
-
-                // Show exit capture in the trip record card
-                const exitImg = document.getElementById('exit-face');
-                exitImg.src = msg.face_url; exitImg.style.display = '';
-                document.getElementById('exit-face-ph').style.display = 'none';
-            }
-            if (msg.type === 'db_match') {
-                showPersonRecord(msg);
-                autoGrantExit(msg.name);
-            }
-            if (msg.type === 'db_notfound') {
-                showPersonNotFound();
-            }
-            if (msg.type === 'success') {
+            if (msg.type === 'success' || msg.type === 'denied') {
                 faceBusy = false;
-                markStep(2, 'done');
+                stopFaceStream();
                 setStatus('v2', '');
                 document.getElementById('btn-face').disabled = false;
-                if (!driverInDB) {
-                    if (document.getElementById('person-loading').style.display !== 'none') {
-                        document.getElementById('card-person').style.display = 'none';
-                    }
-                    document.getElementById('step-hint').textContent =
-                        'Not found via face — try fingerprint scan.';
-                }
                 es.close();
+
+                if (msg.exit_photo_url) {
+                    const faceImg = document.getElementById('face-photo');
+                    faceImg.src = msg.exit_photo_url; faceImg.style.display = '';
+                    document.getElementById('face-ph').style.display = 'none';
+                    exitPhotoPath = msg.exit_photo_url;
+
+                    const exitImg = document.getElementById('exit-face');
+                    exitImg.src = msg.exit_photo_url; exitImg.style.display = '';
+                    document.getElementById('exit-face-ph').style.display = 'none';
+                }
+
+                if (msg.decision === 'GRANTED') {
+                    markStep(2, 'done');
+                    grantExit('Face verified — trip owner matched', exitPhotoPath);
+                } else {
+                    document.getElementById('step-hint').textContent =
+                        'Face does not match this trip\'s driver — try fingerprint or passcode.';
+                }
             }
             if (msg.type === 'error') {
                 faceBusy = false;
@@ -833,7 +691,6 @@ function startFaceScan() {
                 setStatus('v2', 'Failed — try again');
                 document.getElementById('step-hint').textContent =
                     'No face detected. Try again or scan fingerprint.';
-                if (!driverInDB) document.getElementById('card-person').style.display = 'none';
                 es.close();
             }
         };
@@ -841,7 +698,6 @@ function startFaceScan() {
             faceBusy = false;
             stopFaceStream();
             document.getElementById('btn-face').disabled = false;
-            if (!driverInDB) document.getElementById('card-person').style.display = 'none';
             es.close();
         };
     });
@@ -850,75 +706,70 @@ function startFaceScan() {
 // ── STEP 3: FINGERPRINT SCAN ──────────────────────────────────────────────────
 
 function startFP() {
-    if (!tripFound) return;
+    if (!tripFound || !currentTripId) return;
     document.getElementById('btn-fp').disabled = true;
     document.getElementById('btn-fp-cancel').style.display = '';
     document.getElementById('fp-log').textContent = '';
-    if (!driverInDB) personLookupStart();
 
-    let fpDbResult = false;
-
-    fetch('/gate/entry/fp/start', {
+    // Trip-bound verify: compares the live scan against THIS trip's own
+    // stored fingerprint template — never a general holders-database search.
+    fetch('/gate/exit/fp/start', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({capture_id: CAPTURE_ID}),
+        body: JSON.stringify({trip_id: currentTripId}),
     }).then(r => r.json()).then(d => {
         if (d.error) {
             document.getElementById('fp-log').textContent = d.error;
             document.getElementById('btn-fp').disabled = false;
             document.getElementById('btn-fp-cancel').style.display = 'none';
-            if (!driverInDB) document.getElementById('card-person').style.display = 'none';
+            return;
+        }
+        if (d.no_fp) {
+            document.getElementById('fp-log').textContent = d.msg;
+            document.getElementById('btn-fp').disabled = false;
+            document.getElementById('btn-fp-cancel').style.display = 'none';
             return;
         }
 
-        const es = new EventSource('/gate/entry/fp/stream/' + CAPTURE_ID);
+        const es = new EventSource('/gate/exit/fp/stream/' + currentTripId);
         es.onmessage = e => {
             const msg = JSON.parse(e.data);
             document.getElementById('fp-log').textContent = msg.text;
             log(msg.type, msg.text);
 
-            if (msg.type === 'db_match') {
-                fpDbResult = true;
-                showPersonRecord(msg);
-                autoGrantExit(msg.name);
-            }
-            if (msg.type === 'db_notfound') {
-                fpDbResult = true;
-                showPersonNotFound();
-            }
             if (msg.type === 'success') {
                 markStep(3, 'done');
                 document.getElementById('btn-fp-cancel').style.display = 'none';
                 document.getElementById('btn-fp').disabled = false;
                 document.getElementById('fp-status').textContent = 'Done ✓';
-                if (!fpDbResult && document.getElementById('person-loading').style.display !== 'none') {
-                    document.getElementById('card-person').style.display = 'none';
-                }
-                if (!driverInDB) {
-                    document.getElementById('step-hint').textContent =
-                        'Not found via fingerprint — try face scan.';
-                }
+                es.close();
+                grantExit('Fingerprint verified — trip owner matched', exitPhotoPath);
+            }
+            if (msg.type === 'notfound') {
+                document.getElementById('btn-fp-cancel').style.display = 'none';
+                document.getElementById('btn-fp').disabled = false;
+                document.getElementById('fp-status').textContent = 'No match';
+                document.getElementById('step-hint').textContent =
+                    'Fingerprint does not match this trip\'s driver — try face or passcode.';
                 es.close();
             }
             if (msg.type === 'error') {
                 document.getElementById('btn-fp').disabled = false;
                 document.getElementById('btn-fp-cancel').style.display = 'none';
-                if (!driverInDB) document.getElementById('card-person').style.display = 'none';
                 es.close();
             }
         };
         es.onerror = () => {
             document.getElementById('btn-fp').disabled = false;
             document.getElementById('btn-fp-cancel').style.display = 'none';
-            if (!fpDbResult && !driverInDB) document.getElementById('card-person').style.display = 'none';
             es.close();
         };
     });
 }
 
 function cancelFP() {
-    fetch('/gate/entry/fp/cancel', {
+    fetch('/gate/exit/fp/cancel', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({capture_id: CAPTURE_ID}),
+        body: JSON.stringify({trip_id: currentTripId}),
     });
     document.getElementById('btn-fp').disabled = false;
     document.getElementById('btn-fp-cancel').style.display = 'none';

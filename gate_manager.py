@@ -641,7 +641,9 @@ def run_vehicle_auto_capture(cid: str, on_complete):
             time.sleep(0.1)
             continue
 
-        bgr = cv2.cvtColor(raw, cv2.COLOR_RGB2BGR)
+        # fm._cam_state["raw"] is already BGR (a raw copy of the OpenCV
+        # capture frame) — do not re-convert it, that swaps R/B channels.
+        bgr = raw
 
         if vehicle_model is not None:
             try:
@@ -670,7 +672,7 @@ def run_vehicle_auto_capture(cid: str, on_complete):
             with fm._cam_lock:
                 raw = fm._cam_state.get("raw")
             if raw is not None:
-                captured_bgr = cv2.cvtColor(raw, cv2.COLOR_RGB2BGR)
+                captured_bgr = raw.copy()
             break
 
         time.sleep(CHECK_INTERVAL)
@@ -905,6 +907,27 @@ def _push_exit(trip_id: int, t: str, txt: str, **kw):
         q.put({"type": t, "text": txt, **kw})
 
 
+# ── EXIT AUTHORIZATION ────────────────────────────────────────────────────────
+# Server-side, per-trip proof that a verified exit method (biometric matched
+# against THIS trip's own stored encoding/template, or a passcode verified
+# against THIS trip's own passcode) has succeeded. /gate/exit/confirm consumes
+# this instead of trusting a client-supplied decision — a generic "this person
+# exists somewhere in the holders database" match must never be sufficient.
+_exit_authorizations: dict = {}
+_exit_auth_lock = threading.Lock()
+
+
+def authorize_exit(trip_id: int, method: str, **extra):
+    with _exit_auth_lock:
+        _exit_authorizations[trip_id] = {"method": method, **extra}
+
+
+def consume_exit_authorization(trip_id: int):
+    """Return and clear the authorization for trip_id, or None if not authorized."""
+    with _exit_auth_lock:
+        return _exit_authorizations.pop(trip_id, None)
+
+
 def run_exit_verify(trip_id: int, stored_encoding: list, on_complete):
     """
     Capture live frame → SFace face compare → on_complete(result).
@@ -956,17 +979,25 @@ def run_exit_verify(trip_id: int, stored_encoding: list, on_complete):
          distance=round(dist, 3), confidence=confidence)
 
     decision = "GRANTED" if face_match else "DENIED"
+    exit_photo_url = "/gate/photo/" + os.path.basename(exit_photo)
     result = {
         "face_match": face_match,
         "face_distance": round(dist, 3),
         "confidence": confidence,
         "exit_photo": exit_photo,
-        "exit_photo_url": "/gate/photo/" + os.path.basename(exit_photo),
+        "exit_photo_url": exit_photo_url,
         "decision": decision,
     }
 
+    if face_match:
+        # Proof this specific trip's owner was matched — not just any holder.
+        authorize_exit(trip_id, "face", exit_photo=exit_photo,
+                        face_distance=round(dist, 3))
+
     push("success" if face_match else "denied",
-         f"EXIT {decision}", decision=decision)
+         f"EXIT {decision}", decision=decision,
+         exit_photo_url=exit_photo_url, confidence=confidence,
+         face_distance=round(dist, 3))
     finish(result)
 
 
@@ -1161,6 +1192,8 @@ def run_fp_exit(trip_id: int, stored_template: list, on_complete):
     match = score >= FP_THRESHOLD
     if match:
         push("success", f"Fingerprint MATCH — score {score} ✓")
+        # Proof this specific trip's owner was matched — not just any holder.
+        authorize_exit(trip_id, "fingerprint", score=score)
     else:
         push("notfound", f"Fingerprint MISMATCH — score {score} (need ≥ {FP_THRESHOLD})")
 

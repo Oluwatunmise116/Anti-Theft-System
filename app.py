@@ -863,20 +863,47 @@ def gate_exit_last_result(trip_id):
 
 @app.route("/gate/exit/confirm", methods=["POST"])
 def gate_exit_confirm():
-    data = request.json
-    trip_id      = data.get("trip_id")
-    decision     = data.get("decision")          # "GRANTED" or "DENIED"
-    face_distance = data.get("face_distance")
-    exit_photo   = data.get("exit_photo_path")
-    if not trip_id or decision not in ("GRANTED", "DENIED"):
-        return jsonify({"error": "trip_id and valid decision required"}), 400
+    """
+    Close an open trip as GRANTED. The client cannot dictate the decision —
+    a "GRANTED" here requires a server-side exit authorization already
+    recorded for this exact trip_id, produced only by:
+      - a face match against THIS trip's own stored face_encoding
+        (gm.run_exit_verify), or
+      - a fingerprint match against THIS trip's own stored fingerprint
+        template (gm.run_fp_exit), or
+      - a passcode verified against THIS trip's own passcode
+        (/gate/exit/otp/verify).
+    A person merely existing in the general holders database is never
+    sufficient — see gm.authorize_exit / gm.consume_exit_authorization.
+    """
+    data    = request.json or {}
+    trip_id = data.get("trip_id")
+    if not trip_id:
+        return jsonify({"error": "trip_id required"}), 400
+    trip_id = int(trip_id)
+
+    trip = db.get_trip(trip_id)
+    if not trip or trip["status"] != "INSIDE":
+        return jsonify({"error": "Trip not found or already closed"}), 404
+
+    auth = gm.consume_exit_authorization(trip_id)
+    if not auth:
+        return jsonify({
+            "error": "No verified exit authorization for this trip — "
+                     "the biometric must match this trip's own driver, "
+                     "or a valid trip passcode must be verified first."
+        }), 403
+
+    exit_photo    = data.get("exit_photo_path") or auth.get("exit_photo")
+    face_distance = auth.get("face_distance")
+
     db.close_trip(
         trip_id              = trip_id,
-        exit_result          = decision,
+        exit_result          = "GRANTED",
         exit_face_photo_path = exit_photo,
         face_distance        = face_distance,
     )
-    return jsonify({"ok": True, "decision": decision})
+    return jsonify({"ok": True, "decision": "GRANTED", "method": auth.get("method")})
 
 
 # ── GATE: TRIPS LIST ───────────────────────────────────
@@ -930,6 +957,9 @@ def gate_exit_otp_verify():
         return jsonify({"valid": False, "error": "Enter a 4–8 digit passcode"}), 400
     if not db.verify_trip_passcode(int(trip_id), code):
         return jsonify({"valid": False, "error": "Incorrect passcode"}), 400
+    # Proof this specific trip's delegation passcode was verified — not just
+    # a general holders-database match on the delegate's own biometrics.
+    gm.authorize_exit(int(trip_id), "passcode")
     return jsonify({"valid": True})
 
 
