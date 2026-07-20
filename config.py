@@ -9,6 +9,22 @@ CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "config.j
 
 DEFAULTS = {
     "camera_index": 0,
+    "camera_width": 1280,
+    "camera_height": 720,
+    "plate_model_path": "models/nlpdrs_plate_segment.pt",
+    "plate_model_format": "pytorch",
+    "plate_detection_confidence": 0.35,
+    "plate_detection_iou": 0.45,
+    "plate_min_width_pixels": 65,
+    "plate_consensus_frames": 3,
+    "plate_capture_frame_count": 10,
+    "plate_max_corrections": 2,
+    "plate_min_confirm_confidence": 0.55,
+    "plate_ocr_backend": "easyocr",
+    "plate_debug_mode": False,
+    "plate_crop_padding": 6,
+    "plate_debug_max_age_hours": 24,
+    "plate_debug_max_storage_mb": 200,
 }
 
 

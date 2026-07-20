@@ -1,0 +1,55 @@
+{
+  "dataset_dir": "/home/user/Desktop/database/datasets/nigerian-license-plate",
+  "data_yaml_exists": true,
+  "class_name_normalization": {
+    "before": [
+      "0"
+    ],
+    "after": [
+      "license_plate"
+    ]
+  },
+  "splits": [
+    {
+      "split": "train",
+      "images_dir_exists": true,
+      "labels_dir_exists": true,
+      "num_images": 4491,
+      "num_label_files": 4491,
+      "images_missing_labels": [],
+      "labels_missing_images": [],
+      "corrupt_images": [],
+      "empty_annotation_images": [],
+      "invalid_bounding_boxes": [],
+      "invalid_class_ids": []
+    },
+    {
+      "split": "valid",
+      "images_dir_exists": true,
+      "labels_dir_exists": true,
+      "num_images": 200,
+      "num_label_files": 200,
+      "images_missing_labels": [],
+      "labels_missing_images": [],
+      "corrupt_images": [],
+      "empty_annotation_images": [],
+      "invalid_bounding_boxes": [],
+      "invalid_class_ids": []
+    },
+    {
+      "split": "test",
+      "images_dir_exists": true,
+      "labels_dir_exists": true,
+      "num_images": 100,
+      "num_label_files": 100,
+      "images_missing_labels": [],
+      "labels_missing_images": [],
+      "corrupt_images": [],
+      "empty_annotation_images": [],
+      "invalid_bounding_boxes": [],
+      "invalid_class_ids": []
+    }
+  ],
+  "dataset_version": 3,
+  "target_class_name": "license_plate"
+}

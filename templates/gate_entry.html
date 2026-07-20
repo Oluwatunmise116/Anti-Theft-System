@@ -41,9 +41,6 @@
         <line x1="12" y1="16" x2="12.01" y2="16"/>
     </svg>
     <span id="plate-model-msg" style="flex:1;color:var(--text-dim);"></span>
-    <button id="btn-dl-plate" class="btn btn-outline btn-sm" style="display:none;"
-            onclick="downloadModel('plate')">Download Plate Model (~6 MB)</button>
-    <span id="plate-dl-status" style="font-size:11px;color:var(--text-mute);"></span>
 </div>
 <div id="model-banner-face" style="display:none;padding:9px 14px;margin-bottom:14px;
      border-radius:9px;border:1px solid var(--border);background:var(--bg-2);
@@ -181,10 +178,38 @@
                 <button id="btn-retake" class="btn btn-ghost btn-sm" style="display:none;" onclick="startAutoDetect()">↩ Retry</button>
                 <span id="v1-status" style="font-size:11.5px;color:var(--text-mute);"></span>
             </div>
+
+            <!-- ANPR result panel -->
+            <div id="anpr-panel" style="display:none;margin-bottom:10px;padding:10px 12px;
+                 border-radius:8px;border:1px solid var(--border);background:var(--bg-2);">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
+                    <span id="anpr-status-badge" class="badge" style="font-size:10.5px;"></span>
+                    <span id="anpr-reason" style="font-size:11px;color:var(--text-mute);flex:1;"></span>
+                </div>
+                <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-bottom:8px;">
+                    <div>
+                        <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;">Detector</div>
+                        <div id="anpr-detector-conf" class="mono" style="font-size:12px;">—</div>
+                    </div>
+                    <div>
+                        <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;">OCR</div>
+                        <div id="anpr-ocr-conf" class="mono" style="font-size:12px;">—</div>
+                    </div>
+                    <div>
+                        <div style="font-size:9px;color:var(--text-mute);text-transform:uppercase;letter-spacing:1px;">Frames Agree</div>
+                        <div id="anpr-consensus" class="mono" style="font-size:12px;">—</div>
+                    </div>
+                </div>
+                <div id="anpr-crop-wrap" style="display:none;">
+                    <img id="anpr-crop" src="" style="max-width:160px;max-height:50px;border-radius:4px;border:1px solid var(--border);">
+                </div>
+            </div>
+
             <div class="form-group" style="margin-bottom:8px;">
                 <label>Plate Number <span style="color:var(--red)">*</span></label>
                 <input id="plate-input" type="text" placeholder="Auto-detected or type manually…"
-                       style="text-transform:uppercase;font-family:'DM Mono',monospace;letter-spacing:2px;font-size:15px;">
+                       style="text-transform:uppercase;font-family:'DM Mono',monospace;letter-spacing:2px;font-size:15px;"
+                       oninput="onPlateInputEdited()">
             </div>
         </div>
     </div>
@@ -280,6 +305,56 @@ let driverInDB   = false;   // face OR fingerprint found a match
 let vehicleBusy  = false;
 let faceBusy     = false;
 let currentHolderId = null;
+let autoDetectedPlate = '';   // last plate suggested by ANPR, normalized
+let autoPlateStatus   = '';   // CONFIRMED | LOW_CONFIDENCE | NOT_DETECTED
+let plateEditedByUser = false;
+
+// ── ANPR RESULT PANEL ─────────────────────────────────────────────────────────
+
+const STATUS_BADGE = {
+    CONFIRMED:      {cls: 'badge-green', label: 'Confirmed'},
+    LOW_CONFIDENCE: {cls: 'badge-amber', label: 'Low Confidence — review'},
+    NOT_DETECTED:   {cls: 'badge-red',   label: 'Not Detected'},
+    MANUAL:         {cls: 'badge-gold',  label: 'Manual'},
+};
+
+function showAnprPanel(msg) {
+    if (msg.status === undefined) return;
+    autoDetectedPlate = msg.plate || '';
+    autoPlateStatus   = msg.status;
+    plateEditedByUser = false;
+
+    document.getElementById('anpr-panel').style.display = '';
+    const badgeInfo = STATUS_BADGE[msg.status] || {cls: 'badge-red', label: msg.status};
+    const badge = document.getElementById('anpr-status-badge');
+    badge.className = 'badge ' + badgeInfo.cls;
+    badge.textContent = badgeInfo.label;
+
+    document.getElementById('anpr-reason').textContent = msg.rejection_reason || '';
+    document.getElementById('anpr-detector-conf').textContent =
+        msg.detector_confidence !== undefined ? Math.round(msg.detector_confidence * 100) + '%' : '—';
+    document.getElementById('anpr-ocr-conf').textContent =
+        msg.ocr_confidence !== undefined ? Math.round(msg.ocr_confidence * 100) + '%' : '—';
+    document.getElementById('anpr-consensus').textContent =
+        (msg.consensus_count !== undefined && msg.total_frames !== undefined)
+            ? `${msg.consensus_count} / ${msg.total_frames}` : '—';
+
+    const cropWrap = document.getElementById('anpr-crop-wrap');
+    const crop = document.getElementById('anpr-crop');
+    if (msg.plate_crop_url) {
+        crop.src = msg.plate_crop_url; cropWrap.style.display = '';
+    } else {
+        cropWrap.style.display = 'none';
+    }
+
+    if (msg.display_plate) {
+        document.getElementById('plate-input').value = msg.display_plate.replace(/-/g, '');
+    }
+}
+
+function onPlateInputEdited() {
+    plateEditedByUser = true;
+}
 
 // ── CONFIRM LOGIC ─────────────────────────────────────────────────────────────
 //
@@ -450,7 +525,8 @@ function startAutoDetect() {
             log(msg.type, msg.text);
 
             if (msg.type === 'waiting') setDetectOverlay(msg.text);
-            if (msg.plate !== undefined) document.getElementById('plate-input').value = msg.plate;
+            if (msg.status !== undefined) showAnprPanel(msg);
+            else if (msg.plate !== undefined) document.getElementById('plate-input').value = msg.plate;
             if (msg.vehicle_url) {
                 stopVehicleStream();
                 setDetectOverlay(null);
@@ -673,7 +749,7 @@ function cancelFP() {
 
 // ── CONFIRM ───────────────────────────────────────────────────────────────────
 
-function confirmEntry() {
+function confirmEntry(confirmLowConfidence) {
     const plate = document.getElementById('plate-input').value.trim().toUpperCase();
     if (!plate) { alert('Plate number is required.'); return; }
     document.getElementById('btn-confirm').disabled = true;
@@ -686,16 +762,29 @@ function confirmEntry() {
             plate:      plate,
             notes:      document.getElementById('notes-input').value,
             passcode:   document.getElementById('passcode-input').value.trim() || null,
+            confirm_low_confidence: !!confirmLowConfidence,
         }),
-    }).then(r => r.json()).then(d => {
+    }).then(r => r.json().then(d => ({status: r.status, body: d}))).then(({status, body: d}) => {
         if (d.ok) {
             window.location.href = '/gate/trips';
-        } else {
-            alert(d.error || 'Failed to save entry.');
+            return;
+        }
+        if (status === 409 && d.requires_confirmation) {
             document.getElementById('btn-confirm').disabled = false;
             document.getElementById('btn-confirm').innerHTML =
                 '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Log Entry — GRANTED';
+            const ok = confirm(
+                'The plate reading was ' + d.status + ' (not fully confirmed).\n' +
+                'Review the plate crop above carefully.\n\n' +
+                'Log entry with plate "' + plate + '" anyway?'
+            );
+            if (ok) confirmEntry(true);
+            return;
         }
+        alert(d.error || 'Failed to save entry.');
+        document.getElementById('btn-confirm').disabled = false;
+        document.getElementById('btn-confirm').innerHTML =
+            '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Log Entry — GRANTED';
     });
 }
 
@@ -750,11 +839,13 @@ function checkModelStatus() {
         const plateBanner = document.getElementById('model-banner-plate');
         if (!p.yolo_available) {
             document.getElementById('plate-model-msg').textContent =
-                'YOLO not installed — run: pip install ultralytics  (plate OCR fallback active)';
+                'ultralytics not installed — run: pip install ultralytics (see README_ANPR.md)';
             plateBanner.style.display = 'flex';
         } else if (!p.model_present) {
-            document.getElementById('plate-model-msg').textContent = 'Plate detection model missing:';
-            document.getElementById('btn-dl-plate').style.display = '';
+            document.getElementById('plate-model-msg').textContent =
+                'Nigerian plate model not found at ' + (p.model_path || 'models/nigerian_plate_detector.pt') +
+                ' — train it with scripts/train_plate_detector.py (see README_ANPR.md). ' +
+                'Manual plate entry is available in the meantime.';
             plateBanner.style.display = 'flex';
         }
 

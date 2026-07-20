@@ -8,6 +8,7 @@ import fingerprint_manager as fp
 import face_manager as fm
 import gate_manager as gm
 import config as cfg
+from anpr import postprocessing as anpr_post
 from werkzeug.utils import secure_filename
 from datetime import datetime
 
@@ -486,13 +487,27 @@ def gate_model_status():
 
 @app.route("/gate/model/download", methods=["POST"])
 def gate_model_download():
+    """
+    Face models (from the OpenCV Zoo) may still be fetched on demand. The
+    Nigerian plate detector is NOT downloadable at runtime — it must be
+    trained/exported as an explicit offline deployment step (see
+    README_ANPR.md) and placed at the configured plate_model_path. This
+    intentionally replaces the old behaviour of fetching an unrelated
+    generic plate model from third-party GitHub mirrors.
+    """
     model = request.json.get("model", "plate") if request.is_json else "plate"
     if model == "face":
         ok = fm.download_face_models()
         fm._get_face_cv_models()   # load into memory after download
         return jsonify({"ok": ok, **fm.face_model_status()})
-    ok = gm.download_plate_model()
-    return jsonify({"ok": ok, **gm.plate_model_status()})
+    return jsonify({
+        "ok": False,
+        "error": "The Nigerian plate detector cannot be downloaded automatically. "
+                 "Train it with scripts/train_plate_detector.py and export it with "
+                 "scripts/export_plate_model.py, then place the weights at the "
+                 "configured plate_model_path. See README_ANPR.md.",
+        **gm.plate_model_status(),
+    }), 400
 
 
 @app.route("/gate/entry/vehicle/snap", methods=["POST"])
@@ -727,9 +742,32 @@ def gate_exit_fp_cancel():
 def gate_entry_confirm():
     data = request.json
     cid  = data.get("capture_id")
-    plate = data.get("plate", "").strip().upper()
+    plate = anpr_post.normalize_plate_for_storage(data.get("plate", ""))
     if not plate:
         return jsonify({"error": "Plate number is required"}), 400
+
+    captured    = gm.temp_get(cid)
+    auto_plate  = captured.get("plate_number", "") or ""
+    plate_result = captured.get("plate_result") or {}
+    auto_status  = plate_result.get("status", "NOT_DETECTED")
+    auto_conf    = plate_result.get("overall_confidence", 0.0)
+
+    if not auto_plate:
+        plate_source = "manual_entry"
+    elif plate != auto_plate:
+        plate_source = "manual_correction"
+    else:
+        plate_source = "auto"
+        # A reading the operator left untouched must still be explicitly
+        # confirmed before it can grant entry when it wasn't CONFIRMED by
+        # the pipeline itself — no low-confidence result is auto-accepted.
+        if auto_status != "CONFIRMED" and not data.get("confirm_low_confidence"):
+            return jsonify({
+                "error": "Low-confidence plate reading — please review the plate crop "
+                         "and confirm or correct it before logging entry.",
+                "requires_confirmation": True,
+                "status": auto_status,
+            }), 409
 
     captured = gm.temp_get(cid)
     trip_id = db.create_trip(
@@ -739,6 +777,8 @@ def gate_entry_confirm():
         face_encoding        = captured.get("face_encoding"),
         fingerprint_template = captured.get("fingerprint_template"),
         notes                = data.get("notes", ""),
+        plate_source         = plate_source,
+        plate_confidence     = auto_conf if plate_source == "auto" else None,
     )
 
     # Organise captured files into a per-trip folder
@@ -944,6 +984,21 @@ def gate_photo(filename):
     return send_from_directory(photos_dir, filename)
 
 
+@app.route("/gate/debug/<path:filename>")
+def gate_debug_photo(filename):
+    """
+    Serve ANPR debug artifacts (raw/rectified crops, preprocessing
+    variants). Gate images can contain personal information, so this route
+    only works while plate_debug_mode is enabled in config — it is not a
+    permanent public path, and debug artifacts are cleaned up automatically
+    (see anpr debug cleanup in gate_manager / scripts docs).
+    """
+    if not cfg.get("plate_debug_mode", False):
+        return jsonify({"error": "Debug mode is disabled"}), 404
+    debug_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gate_photos", "debug")
+    return send_from_directory(debug_dir, filename)
+
+
 # ── TRIP PASSCODE ──────────────────────────────────────
 
 @app.route("/gate/exit/otp/verify", methods=["POST"])
@@ -1040,6 +1095,8 @@ def inject_now():
 
 
 if __name__ == "__main__":
-    # Pre-load EasyOCR in the background so the first plate scan doesn't stall
+    # Pre-load the OCR backend in the background so the first plate scan doesn't stall
     gm.warm_up_ocr()
+    # Prune any stale ANPR debug artifacts from previous runs before serving requests
+    gm.cleanup_debug_artifacts()
     app.run(host="0.0.0.0", port=5000, debug=True, use_reloader=False, threaded=True)

@@ -119,6 +119,18 @@ def init_db():
         conn.commit()
     except Exception:
         pass
+    # ANPR provenance — required so a plate reading's trust level survives
+    # into the audit trail (auto-recognised vs. operator-typed/corrected).
+    try:
+        c.execute("ALTER TABLE trips ADD COLUMN plate_source TEXT DEFAULT 'manual_entry'")
+        conn.commit()
+    except Exception:
+        pass
+    try:
+        c.execute("ALTER TABLE trips ADD COLUMN plate_confidence REAL")
+        conn.commit()
+    except Exception:
+        pass
     conn.close()
 
 
@@ -376,14 +388,20 @@ def get_stats():
 # ── TRIPS ─────────────────────────────────────────────────────────────────────
 
 def create_trip(plate_number, vehicle_photo_path, face_photo_path, face_encoding,
-                fingerprint_template=None, notes=""):
+                fingerprint_template=None, notes="",
+                plate_source="manual_entry", plate_confidence=None):
+    """
+    plate_source is one of "auto" (unedited ANPR result), "manual_correction"
+    (operator edited an ANPR suggestion), or "manual_entry" (typed with no
+    ANPR suggestion) — preserved for the audit trail.
+    """
     conn = get_connection()
     c = conn.cursor()
     c.execute("""
         INSERT INTO trips
             (plate_number, vehicle_photo_path, face_photo_path, face_encoding,
-             fingerprint_template, notes)
-        VALUES (?,?,?,?,?,?)
+             fingerprint_template, notes, plate_source, plate_confidence)
+        VALUES (?,?,?,?,?,?,?,?)
     """, (
         plate_number.strip().upper(),
         vehicle_photo_path,
@@ -391,6 +409,8 @@ def create_trip(plate_number, vehicle_photo_path, face_photo_path, face_encoding
         json.dumps(face_encoding) if face_encoding else None,
         json.dumps(fingerprint_template) if fingerprint_template else None,
         notes,
+        plate_source,
+        plate_confidence,
     ))
     trip_id = c.lastrowid
     conn.commit()

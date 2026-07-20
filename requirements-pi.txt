@@ -1,0 +1,44 @@
+# Raspberry Pi gate-device deployment requirements — INFERENCE ONLY.
+#
+# Verified on: Raspberry Pi 5, Debian 13 (trixie), 64-bit (aarch64),
+# Python 3.13.5, 8 GB RAM. If you are on a 32-bit Raspberry Pi OS image,
+# see the troubleshooting section of README_ANPR.md before installing —
+# torch/opencv 64-bit wheels are not interchangeable with a 32-bit OS.
+#
+# Deliberately excludes: roboflow (dataset download), pytest (testing) —
+# training/eval tooling never needs to be installed on the gate device, and
+# the running Flask app must never download a model while handling a
+# request (model acquisition is an explicit offline step — see
+# scripts/train_plate_detector.py and scripts/export_plate_model.py, run on
+# a training workstation, with the resulting weights copied to this Pi).
+#
+# Install with:
+#   pip install -r requirements-pi.txt
+
+# ── Core application ──────────────────────────────────────────────────────
+Flask==3.1.1
+Flask-SocketIO==5.6.1
+Werkzeug==3.1.3
+numpy==2.2.4
+opencv-python==4.13.0.92
+pillow==11.1.0
+requests==2.32.3
+PyYAML==6.0.2
+
+# ── ANPR: detector + OCR ──────────────────────────────────────────────────
+# ultralytics is required to LOAD the plate model even when it has been
+# exported to ONNX/NCNN (Ultralytics' YOLO() wrapper handles all three
+# formats transparently) — see scripts/export_plate_model.py. torch is a
+# hard dependency of ultralytics as of this version even when the model
+# itself is not run through the PyTorch backend at inference time.
+ultralytics==8.4.62
+torch==2.12.0
+torchvision==0.27.0
+easyocr==1.7.2
+fast-plate-ocr==1.1.0
+onnxruntime>=1.20
+
+# ── Fingerprint sensor (Raspberry Pi GPIO/UART hardware only) ────────────
+adafruit-circuitpython-fingerprint==2.2.24
+Adafruit-Blinka==9.0.4
+pyserial==3.5

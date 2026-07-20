@@ -34,6 +34,14 @@ import config as cfg
 USB_CAMERA_INDEX   = cfg.get("camera_index", 0)
 CAPTURE_DELAY      = 2.5
 
+# Requested capture resolution — plates lose too many pixels at 640x480, so
+# the default now targets 720p. The camera worker verifies and logs the
+# resolution the driver actually returned (not every camera honours the
+# request), and the raw full-resolution frame is what plate detection runs
+# on; the live MJPEG preview may still be shown at a smaller size.
+REQUESTED_CAMERA_WIDTH  = cfg.get("camera_width", 1280)
+REQUESTED_CAMERA_HEIGHT = cfg.get("camera_height", 720)
+
 # SFace cosine distance threshold.
 # OpenCV docs: cosine similarity 0.363 → same person.
 # We convert: distance = 1 − similarity  →  same person: dist < 0.637.
@@ -165,7 +173,41 @@ def switch_camera(index: int):
 _cam_lock    = threading.Lock()
 _cam_running = threading.Event()   # set = worker thread is alive
 _cam_thread  = None
-_cam_state   = {"frame": None, "raw": None}  # "frame"=annotated for MJPEG, "raw"=clean for ANPR/capture
+_cam_state   = {"frame": None, "raw": None, "width": 0, "height": 0}
+# "frame"=annotated for MJPEG, "raw"=clean full-resolution frame for ANPR/capture
+
+# Live preview frames above this width are downscaled before JPEG-encoding
+# for the MJPEG stream only — the full-resolution "raw" frame used for plate
+# detection is never touched by this.
+PREVIEW_MAX_WIDTH = 960
+
+
+def negotiate_camera_resolution(cap, requested_width: int, requested_height: int) -> tuple:
+    """
+    Ask the camera for (requested_width, requested_height) and return the
+    resolution it actually reports back. Not every camera/driver honours an
+    arbitrary resolution request, so callers must use this return value —
+    never assume the request was granted.
+    """
+    # Request MJPG before setting the resolution: many UVC cameras only offer
+    # their higher modes (720p/1080p) as MJPG and cap out at 640x480 in the
+    # raw YUYV format OpenCV selects by default, so without this the
+    # resolution request below is silently refused.
+    cap.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter_fourcc(*"MJPG"))
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, requested_width)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, requested_height)
+    actual_w = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH) or 0)
+    actual_h = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT) or 0)
+    if actual_w <= 0 or actual_h <= 0:
+        # Some backends only report real dimensions after the first read();
+        # fall back to what was requested and let the first frame confirm.
+        actual_w, actual_h = requested_width, requested_height
+    return actual_w, actual_h
+
+
+def get_camera_resolution() -> tuple:
+    with _cam_lock:
+        return _cam_state.get("width", 0), _cam_state.get("height", 0)
 
 # ── CAPTURE PIPE ──────────────────────────────────────────────────────────────
 _capture_event = threading.Event()        # set = worker should capture next frame
@@ -190,12 +232,30 @@ def _camera_worker():
         _cam_running.clear()
         return
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH,  640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    requested_w = cfg.get("camera_width", REQUESTED_CAMERA_WIDTH)
+    requested_h = cfg.get("camera_height", REQUESTED_CAMERA_HEIGHT)
+    actual_w, actual_h = negotiate_camera_resolution(cap, requested_w, requested_h)
     cap.set(cv2.CAP_PROP_FPS, 30)
 
     for _ in range(5):   # warmup — discard first frames so exposure settles
-        cap.read()
+        ret, warm_frame = cap.read()
+
+    # Confirm against a real captured frame — some backends only report the
+    # true negotiated size once frames are actually flowing, and some
+    # cameras silently fall back to a resolution near, but not exactly, the
+    # one requested.
+    if ret and warm_frame is not None:
+        actual_h, actual_w = warm_frame.shape[:2]
+    fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
+    fourcc_str = "".join(chr((fourcc >> 8 * i) & 0xFF) for i in range(4)).strip("\x00 ")
+    print(f"[face_manager] Camera format {fourcc_str or 'unknown'}, "
+          f"resolution {actual_w}x{actual_h}"
+          + ("" if (actual_w, actual_h) == (requested_w, requested_h)
+             else f" (requested {requested_w}x{requested_h})"),
+          flush=True)
+    with _cam_lock:
+        _cam_state["width"]  = actual_w
+        _cam_state["height"] = actual_h
 
     try:
         while _cam_running.is_set():
@@ -246,9 +306,18 @@ def _camera_worker():
                 except queue.Full:
                     pass
 
+            # The MJPEG live preview may use a downscaled copy — the full-
+            # resolution "raw" frame (used for face encoding, colour, and
+            # plate detection) is never touched by this.
+            preview = frame
+            if frame.shape[1] > PREVIEW_MAX_WIDTH:
+                scale = PREVIEW_MAX_WIDTH / frame.shape[1]
+                preview = cv2.resize(frame, None, fx=scale, fy=scale,
+                                      interpolation=cv2.INTER_AREA)
+
             with _cam_lock:
-                _cam_state["frame"] = frame   # annotated — for MJPEG stream
-                _cam_state["raw"]   = raw     # clean — for ANPR / color / face encoding
+                _cam_state["frame"] = preview  # annotated, possibly downscaled — MJPEG stream only
+                _cam_state["raw"]   = raw      # full-resolution, clean — ANPR / colour / face encoding
 
             time.sleep(0.033)
 

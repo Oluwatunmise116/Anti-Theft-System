@@ -1,0 +1,329 @@
+#!/usr/bin/env python3
+"""
+Train the Nigerian license-plate DETECTOR (bounding boxes only) on the
+dataset downloaded by scripts/download_nigerian_plate_dataset.py.
+
+This trains a detector, not an OCR text recognizer — the Roboflow dataset
+has no plate-text transcriptions. Detection accuracy (mAP/precision/recall
+on locating the plate box) and OCR accuracy (reading the text, evaluated
+separately by tools/build_local_plate_test_set.py against real gate
+footage) are two different numbers. This script only reports the former,
+and only from an actual training run — it never fabricates metrics.
+
+Run this on a GPU workstation or cloud notebook, NOT on the Raspberry Pi.
+Raspberry Pi deployment uses the exported weights (see
+scripts/export_plate_model.py); nothing here runs on the Pi.
+
+Example:
+    python scripts/train_plate_detector.py \\
+        --data datasets/nigerian-license-plate/data.yaml \\
+        --model yolov8n.pt \\
+        --imgsz 640 \\
+        --epochs 120 \\
+        --patience 25 \\
+        --batch -1 \\
+        --seed 42 \\
+        --run-name ng_plate_640
+
+To compare imgsz=640 vs imgsz=960 (per the ANPR audit requirement to
+evaluate at least two configurations before picking a production model):
+
+    python scripts/train_plate_detector.py --imgsz 640 --run-name ng_plate_640
+    python scripts/train_plate_detector.py --imgsz 960 --run-name ng_plate_960
+    python scripts/train_plate_detector.py --compare ng_plate_640 ng_plate_960
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import shutil
+import sys
+import time
+from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+REPORTS_DIR = REPO_ROOT / "reports"
+RUNS_DIR = REPO_ROOT / "runs" / "plate_detector"
+PRODUCTION_MODEL_PATH = REPO_ROOT / "models" / "nigerian_plate_detector.pt"
+
+# Augmentations are deliberately restricted here (passed to model.train) —
+# plate text is direction- and orientation-sensitive, so flips/heavy
+# rotation/heavy perspective would teach the model on physically unrealistic
+# plates (a mirrored plate is not a plate a camera will ever actually see).
+SAFE_AUGMENTATION_OVERRIDES = {
+    "fliplr": 0.0,      # NEVER flip — mirrors plate text
+    "flipud": 0.0,      # NEVER flip
+    "degrees": 5.0,      # small rotation only
+    "shear": 2.0,        # mild
+    "perspective": 0.0003,  # mild perspective, not the 0.001+ that warps text badly
+    "translate": 0.08,
+    "scale": 0.4,         # limited scaling — avoid extreme zoom that destroys small plates
+    "hsv_h": 0.010,
+    "hsv_s": 0.5,         # moderate brightness/contrast-adjacent color jitter
+    "hsv_v": 0.35,
+    "mosaic": 0.5,        # reduced from Ultralytics' aggressive default (1.0) —
+                          # full mosaic tiles small plates into unreadable fragments
+    "mixup": 0.0,        # would blend two plates into a nonsense image
+    "copy_paste": 0.0,
+    "blur": 0.0,          # Ultralytics has no built-in mild-blur augment as of 8.x;
+                          # mild blur robustness is instead covered by the local
+                          # evaluation set (tools/build_local_plate_test_set.py),
+                          # which explicitly buckets blurry real gate photos.
+}
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("--data", default=str(REPO_ROOT / "datasets" / "nigerian-license-plate" / "data.yaml"))
+    p.add_argument("--model", default="yolov8n.pt",
+                   help="Pretrained weights to fine-tune from (nano recommended for Pi deployment)")
+    p.add_argument("--imgsz", type=int, default=640, choices=[640, 960],
+                   help="Training image size — compare 640 vs 960 before choosing production config")
+    p.add_argument("--epochs", type=int, default=120)
+    p.add_argument("--patience", type=int, default=25, help="Early-stopping patience")
+    p.add_argument("--batch", default=-1, help="Batch size, or -1 for Ultralytics auto-batch")
+    p.add_argument("--seed", type=int, default=42, help="Deterministic seed")
+    p.add_argument("--conf-threshold", type=float, default=0.35,
+                   help="Confidence threshold to record as the selected operating point")
+    p.add_argument("--iou-threshold", type=float, default=0.45,
+                   help="NMS IoU threshold to record as the selected operating point")
+    p.add_argument("--run-name", default=None, help="Name for this run under runs/plate_detector/")
+    p.add_argument("--device", default=None, help="cuda device id, 'cpu', or leave unset for auto")
+    p.add_argument("--promote", action="store_true",
+                   help="Copy this run's best.pt to models/nigerian_plate_detector.pt IF it "
+                        "passes validation (never overwrites blindly)")
+    p.add_argument("--compare", nargs="+", default=None, metavar="RUN_NAME",
+                   help="Skip training; compare already-completed runs by name and print a summary")
+    return p
+
+
+def _require_ultralytics():
+    try:
+        from ultralytics import YOLO
+        return YOLO
+    except ImportError:
+        print("ERROR: ultralytics is not installed. This script must run on a training "
+              "workstation/cloud notebook with: pip install -r requirements.txt", file=sys.stderr)
+        sys.exit(2)
+
+
+def train_one_config(args) -> Path:
+    """Runs one training configuration and returns the run directory."""
+    YOLO = _require_ultralytics()
+
+    data_yaml = Path(args.data)
+    if not data_yaml.exists():
+        print(f"ERROR: {data_yaml} not found. Run "
+              f"scripts/download_nigerian_plate_dataset.py first.", file=sys.stderr)
+        sys.exit(2)
+
+    run_name = args.run_name or f"ng_plate_{args.imgsz}_{int(time.time())}"
+    RUNS_DIR.mkdir(parents=True, exist_ok=True)
+
+    model = YOLO(args.model)   # transfer learning from pretrained COCO weights, not random init
+
+    train_kwargs = dict(
+        data=str(data_yaml),
+        imgsz=args.imgsz,
+        epochs=args.epochs,
+        patience=args.patience,
+        batch=args.batch,
+        seed=args.seed,
+        deterministic=True,
+        pretrained=True,
+        project=str(RUNS_DIR),
+        name=run_name,
+        exist_ok=True,
+        plots=True,        # saves PR curve, confusion matrix, val batch mosaics
+        val=True,
+        **SAFE_AUGMENTATION_OVERRIDES,
+    )
+    if args.device is not None:
+        train_kwargs["device"] = args.device
+
+    print(f"Starting training run '{run_name}' — imgsz={args.imgsz}, epochs={args.epochs}, "
+          f"patience={args.patience}, seed={args.seed}")
+    print("Augmentation overrides (flips disabled — plate text must never be mirrored):")
+    print(json.dumps(SAFE_AUGMENTATION_OVERRIDES, indent=2))
+
+    results = model.train(**train_kwargs)
+    run_dir = Path(results.save_dir)
+
+    # Save exact training args for reproducibility/audit (Ultralytics already
+    # writes args.yaml, but we additionally capture the CLI-level context).
+    (run_dir / "cli_invocation.json").write_text(json.dumps({
+        "argv": sys.argv,
+        "data_yaml": str(data_yaml),
+        "model": args.model,
+        "imgsz": args.imgsz,
+        "epochs": args.epochs,
+        "patience": args.patience,
+        "batch": args.batch,
+        "seed": args.seed,
+        "augmentation_overrides": SAFE_AUGMENTATION_OVERRIDES,
+    }, indent=2))
+
+    return run_dir
+
+
+def _metrics_from_run(run_dir: Path) -> dict:
+    """
+    Pull real metrics out of an Ultralytics run directory. Only reports
+    numbers that Ultralytics itself computed on the VALIDATION split — never
+    training-set performance, and never a fabricated/estimated number.
+    """
+    YOLO = _require_ultralytics()
+    weights = run_dir / "weights" / "best.pt"
+    if not weights.exists():
+        raise FileNotFoundError(f"No best.pt in {run_dir} — training may not have completed.")
+
+    model = YOLO(str(weights))
+    metrics = model.val()   # re-runs validation to get a fresh, current metrics object
+
+    box = metrics.box
+    return {
+        "run_dir": str(run_dir),
+        "weights_path": str(weights),
+        "mAP50": float(box.map50),
+        "mAP50_95": float(box.map),
+        "precision": float(box.mp),
+        "recall": float(box.mr),
+        "num_validation_images": int(getattr(metrics, "seen", 0) or 0),
+    }
+
+
+def summarize_run(args, run_dir: Path):
+    metrics = _metrics_from_run(run_dir)
+    metrics.update({
+        "dataset": str(args.data),
+        "model_architecture": args.model,
+        "imgsz": args.imgsz,
+        "epochs_requested": args.epochs,
+        "patience": args.patience,
+        "seed": args.seed,
+        "selected_confidence_threshold": args.conf_threshold,
+        "selected_iou_threshold": args.iou_threshold,
+        "note": "mAP/precision/recall describe PLATE DETECTION (bounding-box) accuracy only. "
+                "This is not OCR/plate-reading accuracy — see reports/plate_detector_summary.md "
+                "and tools/build_local_plate_test_set.py for the separate OCR evaluation.",
+    })
+
+    REPORTS_DIR.mkdir(parents=True, exist_ok=True)
+    metrics_path = REPORTS_DIR / "plate_detector_metrics.json"
+
+    existing = []
+    if metrics_path.exists():
+        try:
+            existing = json.loads(metrics_path.read_text())
+            if isinstance(existing, dict):
+                existing = [existing]
+        except Exception:
+            existing = []
+    existing.append(metrics)
+    metrics_path.write_text(json.dumps(existing, indent=2))
+
+    _write_summary_md(existing)
+
+    print("\n=== Validation metrics (real, from this run) ===")
+    for k in ("mAP50", "mAP50_95", "precision", "recall"):
+        print(f"  {k}: {metrics[k]:.4f}")
+    print(f"\nFull metrics appended to {metrics_path}")
+    print("IMPORTANT: these are validation-set numbers, not training-set numbers, and they "
+          "measure detection (box localization) only. Do not report mAP as plate-reading "
+          "accuracy — OCR accuracy must be measured separately on real gate footage.")
+
+    return metrics
+
+
+def _write_summary_md(all_runs: list):
+    lines = ["# Nigerian Plate Detector — Training Summary", "",
+             "Detector (bounding-box) metrics only. OCR/plate-reading accuracy is a "
+             "separate, later-stage measurement — see tools/build_local_plate_test_set.py.",
+             "", "| Run | imgsz | epochs | mAP50 | mAP50-95 | precision | recall |",
+             "|---|---|---|---|---|---|---|"]
+    for m in all_runs:
+        lines.append(
+            f"| {Path(m['run_dir']).name} | {m['imgsz']} | {m['epochs_requested']} | "
+            f"{m['mAP50']:.4f} | {m['mAP50_95']:.4f} | {m['precision']:.4f} | {m['recall']:.4f} |"
+        )
+    lines += [
+        "",
+        "## How to read this",
+        "- mAP50 / mAP50-95 / precision / recall are computed by Ultralytics on the "
+        "**validation split only** (never the training split).",
+        "- These numbers describe how reliably the model draws a box around a plate — "
+        "they say nothing about whether the OCR stage reads the text correctly.",
+        "- False positives/negatives should be spot-checked visually in each run's "
+        "`val_batch*_pred.jpg` files before promoting a model to production.",
+    ]
+    (REPORTS_DIR / "plate_detector_summary.md").write_text("\n".join(lines) + "\n")
+
+
+def compare_runs(run_names: list):
+    rows = []
+    for name in run_names:
+        run_dir = RUNS_DIR / name
+        if not run_dir.exists():
+            print(f"WARNING: run '{name}' not found under {RUNS_DIR} — skipping", file=sys.stderr)
+            continue
+        try:
+            m = _metrics_from_run(run_dir)
+            rows.append((name, m))
+        except FileNotFoundError as e:
+            print(f"WARNING: {e}", file=sys.stderr)
+
+    if not rows:
+        print("No completed runs to compare.", file=sys.stderr)
+        sys.exit(1)
+
+    print(f"{'run':<24}{'mAP50':>10}{'mAP50-95':>12}{'precision':>12}{'recall':>10}")
+    for name, m in rows:
+        print(f"{name:<24}{m['mAP50']:>10.4f}{m['mAP50_95']:>12.4f}{m['precision']:>12.4f}{m['recall']:>10.4f}")
+
+    best_name, best_metrics = max(rows, key=lambda r: r[1]["mAP50_95"])
+    print(f"\nHighest mAP50-95: {best_name} ({best_metrics['mAP50_95']:.4f})")
+    print("Review false positives/negatives and inference time (scripts/export_plate_model.py) "
+          "before promoting — mAP alone should not decide the production model.")
+
+
+def promote_to_production(run_dir: Path, metrics: dict):
+    """
+    Copy best.pt to models/nigerian_plate_detector.pt — but only after the
+    caller has seen validation metrics, and only if they look sane. This
+    never runs unattended from a bad/incomplete run.
+    """
+    if metrics["mAP50"] <= 0:
+        print("Refusing to promote: mAP50 is 0 — this model does not detect plates.",
+              file=sys.stderr)
+        sys.exit(1)
+
+    weights = Path(metrics["weights_path"])
+    PRODUCTION_MODEL_PATH.parent.mkdir(parents=True, exist_ok=True)
+    if PRODUCTION_MODEL_PATH.exists():
+        backup = PRODUCTION_MODEL_PATH.with_suffix(".pt.bak")
+        shutil.copy2(PRODUCTION_MODEL_PATH, backup)
+        print(f"Backed up previous production model to {backup}")
+    shutil.copy2(weights, PRODUCTION_MODEL_PATH)
+    print(f"Promoted {weights} -> {PRODUCTION_MODEL_PATH}")
+
+
+def main():
+    parser = build_arg_parser()
+    args = parser.parse_args()
+
+    if args.compare:
+        compare_runs(args.compare)
+        return
+
+    run_dir = train_one_config(args)
+    metrics = summarize_run(args, run_dir)
+
+    if args.promote:
+        promote_to_production(run_dir, metrics)
+    else:
+        print(f"\nNot promoted to {PRODUCTION_MODEL_PATH} (pass --promote to do so after "
+              f"reviewing metrics and validation plots in {run_dir}).")
+
+
+if __name__ == "__main__":
+    main()

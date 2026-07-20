@@ -1,0 +1,20 @@
+[
+  {
+    "run_dir": "/home/user/Desktop/database/runs/plate_detector/ng_plate_test",
+    "weights_path": "/home/user/Desktop/database/runs/plate_detector/ng_plate_test/weights/best.pt",
+    "mAP50": 0.995,
+    "mAP50_95": 0.7968015983202156,
+    "precision": 1.0,
+    "recall": 0.9947616062445909,
+    "num_validation_images": 0,
+    "dataset": "datasets/nigerian-license-plate/data.yaml",
+    "model_architecture": "yolov8n.pt",
+    "imgsz": 640,
+    "epochs_requested": 1,
+    "patience": 1,
+    "seed": 42,
+    "selected_confidence_threshold": 0.35,
+    "selected_iou_threshold": 0.45,
+    "note": "mAP/precision/recall describe PLATE DETECTION (bounding-box) accuracy only. This is not OCR/plate-reading accuracy \u2014 see reports/plate_detector_summary.md and tools/build_local_plate_test_set.py for the separate OCR evaluation."
+  }
+]

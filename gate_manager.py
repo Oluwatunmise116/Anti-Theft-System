@@ -36,88 +36,129 @@ except ImportError:
 
 import face_manager as fm
 import fingerprint_manager as fp_mgr
+import config as cfg
+import anpr as _anpr
+from anpr import preprocessing as _anpr_pp
 
 GATE_PHOTOS_DIR   = "gate_photos"
+DEBUG_PHOTOS_DIR  = os.path.join(GATE_PHOTOS_DIR, "debug")
 os.makedirs(GATE_PHOTOS_DIR, exist_ok=True)
 
 FACE_TOLERANCE  = 0.60   # SFace cosine distance; same-person threshold ~0.637
 FP_THRESHOLD    = 30
 COLOR_TOLERANCE = 0.35
 
-# ── YOLO PLATE MODEL ──────────────────────────────────────────────────────────
 
-_PLATE_MODEL_PATH = os.path.join("models", "license_plate_detector.pt")
-# Mirror URLs for the YOLOv8 license plate detector (tried in order)
-_PLATE_MODEL_URLS = [
-    # Same model & filename as the computervisioneng/automatic-number-plate-recognition repo
-    "https://raw.githubusercontent.com/Muhammad-Zeerak-Khan/"
-    "Automatic-License-Plate-Recognition-using-YOLOv8/main/license_plate_detector.pt",
-    # Pi-optimised variant
-    "https://raw.githubusercontent.com/ahasera/"
-    "alpr-YOLOv8-YOLOv4Tiny/main/models/yolov8/best.pt",
-    # Additional mirror
-    "https://raw.githubusercontent.com/Arijit1080/"
-    "Licence-Plate-Detection-using-YOLO-V8/main/best.pt",
-]
+def cleanup_debug_artifacts():
+    """
+    ANPR debug sessions can contain full vehicle/plate photos, which may be
+    personal information — they are only ever written when plate_debug_mode
+    is on, and are pruned here by age and total size so they don't
+    accumulate indefinitely.
+    """
+    if not os.path.isdir(DEBUG_PHOTOS_DIR):
+        return
+    c = cfg.load()
+    max_age_s = c.get("plate_debug_max_age_hours", 24) * 3600
+    max_bytes = c.get("plate_debug_max_storage_mb", 200) * 1024 * 1024
+    now = time.time()
 
-_plate_yolo       = None
-_plate_yolo_lock  = threading.Lock()
+    sessions = []
+    total_size = 0
+    for name in os.listdir(DEBUG_PHOTOS_DIR):
+        path = os.path.join(DEBUG_PHOTOS_DIR, name)
+        if not os.path.isdir(path):
+            continue
+        mtime = os.path.getmtime(path)
+        size = sum(
+            os.path.getsize(os.path.join(dp, f))
+            for dp, _, files in os.walk(path) for f in files
+        )
+        if now - mtime > max_age_s:
+            _rmtree(path)
+            continue
+        sessions.append((mtime, size, path))
+        total_size += size
+
+    sessions.sort()   # oldest first
+    while total_size > max_bytes and sessions:
+        mtime, size, path = sessions.pop(0)
+        _rmtree(path)
+        total_size -= size
 
 
-def _get_plate_yolo():
-    global _plate_yolo
-    if _plate_yolo is not None:
-        return _plate_yolo
-    if not YOLO_AVAILABLE or not os.path.exists(_PLATE_MODEL_PATH):
-        return None
-    with _plate_yolo_lock:
-        if _plate_yolo is not None:
-            return _plate_yolo
-        try:
-            import warnings
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")
-                _plate_yolo = _YOLO_CLASS(_PLATE_MODEL_PATH)
-        except Exception:
-            pass
-    return _plate_yolo
+def _rmtree(path):
+    import shutil
+    try:
+        shutil.rmtree(path, ignore_errors=True)
+    except Exception:
+        pass
+
+# ── NIGERIAN PLATE DETECTOR (anpr package) ────────────────────────────────────
+# The plate model is the NLPDRS YOLOv8 segmentation model (trained on
+# Nigerian plates, annotated to segment just the plate-number portion) from
+# https://github.com/esssyjr/NLPDRS-Nierian-License-Plate-Detection-and-Recognition-System-
+# placed at models/nlpdrs_plate_segment.pt. Nothing in this module downloads
+# a model at runtime; if the configured weights file is missing or fails to
+# load, detection fails clearly (PlateModelError) and manual plate entry
+# remains available.
+
+_pipeline_lock = threading.Lock()
+_pipeline = None
 
 
-def download_plate_model(push_fn=None) -> bool:
-    """Download the YOLO plate model if not already present. Returns True when ready."""
-    if os.path.exists(_PLATE_MODEL_PATH):
-        return True
-    if not YOLO_AVAILABLE:
-        if push_fn:
-            push_fn("warning", "ultralytics not installed — run: pip install ultralytics")
-        return False
-    os.makedirs("models", exist_ok=True)
-    if push_fn:
-        push_fn("step", "Downloading plate detection model (~6 MB)…")
-    import urllib.request
-    tmp = _PLATE_MODEL_PATH + ".tmp"
-    for url in _PLATE_MODEL_URLS:
-        try:
-            urllib.request.urlretrieve(url, tmp)
-            os.rename(tmp, _PLATE_MODEL_PATH)
-            if push_fn:
-                push_fn("ok", "Plate model downloaded ✓")
-            return True
-        except Exception as e:
-            if push_fn:
-                push_fn("info", f"Mirror failed ({e}) — trying next…")
-    if push_fn:
-        push_fn("warning", "All mirrors failed — plate detection will use OCR fallback")
-    return False
+def _anpr_config() -> dict:
+    c = cfg.load()
+    return {
+        "plate_model_path": c.get(
+            "plate_model_path", os.path.join("models", "nlpdrs_plate_segment.pt")
+        ),
+        "plate_detection_confidence": c.get("plate_detection_confidence", 0.35),
+        "plate_detection_iou": c.get("plate_detection_iou", 0.45),
+        "plate_min_width_pixels": c.get("plate_min_width_pixels", 100),
+        "plate_consensus_frames": c.get("plate_consensus_frames", 3),
+        "plate_capture_frame_count": c.get("plate_capture_frame_count", 10),
+        "plate_max_corrections": c.get("plate_max_corrections", 2),
+        "plate_min_confirm_confidence": c.get("plate_min_confirm_confidence", 0.55),
+        "plate_ocr_backend": c.get("plate_ocr_backend", "easyocr"),
+        "plate_debug_mode": c.get("plate_debug_mode", False),
+        "plate_crop_padding": c.get("plate_crop_padding", 6),
+    }
+
+
+def get_pipeline():
+    """
+    Build the ANPR pipeline once and reuse it for the life of the process —
+    the YOLO detector and OCR backend are each loaded once behind their own
+    lock (see anpr.detector.PlateDetector / anpr.recognizer), never
+    reloaded per gate request.
+    """
+    global _pipeline
+    if _pipeline is not None:
+        return _pipeline
+    with _pipeline_lock:
+        if _pipeline is None:
+            _pipeline = _anpr.build_pipeline(_anpr_config())
+    return _pipeline
+
+
+def reset_pipeline():
+    """Force a rebuild on next use — call after plate_* settings change."""
+    global _pipeline
+    with _pipeline_lock:
+        _pipeline = None
 
 
 def plate_model_status() -> dict:
-    return {
-        "yolo_available": YOLO_AVAILABLE,
-        "model_present":  os.path.exists(_PLATE_MODEL_PATH),
-        "model_loaded":   _plate_yolo is not None,
-        "model_path":     _PLATE_MODEL_PATH,
-    }
+    return get_pipeline().status()
+
+
+def warm_up_ocr():
+    """Pre-load the OCR backend in the background so the first plate scan is instant."""
+    pipeline = get_pipeline()
+    warm = getattr(pipeline.ocr, "warm_up", None)
+    if warm:
+        threading.Thread(target=warm, daemon=True).start()
 
 
 # ── YOLO VEHICLE MODEL (for body crop → accurate colour) ──────────────────────
@@ -173,267 +214,60 @@ def detect_vehicle_crop(frame_bgr):
 
 
 # ── ANPR ──────────────────────────────────────────────────────────────────────
+# Detection (finding the plate box) and OCR (reading the plate text) are two
+# separate stages with two separate accuracy numbers — see
+# reports/plate_detector_metrics.json for detector-only metrics and
+# README_ANPR.md for why OCR accuracy is reported separately. This module
+# only orchestrates frame capture / ROI selection around anpr.PlateRecognitionPipeline;
+# all detection, preprocessing, OCR and consensus logic lives in anpr/.
 
-_ocr_reader = None
-_ocr_lock   = threading.Lock()
-# Nigerian plate format: 2-3 letters + 2-4 digits + 1-3 letters (e.g. KJA456GH, LSD123AB)
-_PLATE_RE   = re.compile(r'^[A-Z]{1,3}[0-9]{2,4}[A-Z]{1,3}$')
-# Words that appear in camera overlay text and must never be returned as plates
-_OVERLAY_WORDS = frozenset([
-    'FACE', 'DETECTED', 'CAPTURING', 'POSITION', 'HOLD', 'STILL',
-    'FRAME', 'CAMERA', 'WAITING', 'INSIDE', 'DENIED', 'GRANTED',
-])
-
-# OCR character correction maps (from util.py in the referenced repo, adapted for Nigerian plates)
-_INT_TO_CHAR = {'0': 'O', '1': 'I', '5': 'S', '6': 'G', '8': 'B', '3': 'J', '4': 'A', '2': 'Z'}
-_CHAR_TO_INT = {'O': '0', 'I': '1', 'S': '5', 'G': '6', 'B': '8', 'J': '3', 'A': '4', 'Z': '2'}
-
-# Known Nigerian plate structures (first_letters, digits, last_letters) ordered by frequency
-_NG_STRUCTURES = [
-    (3, 3, 2),   # 8 chars: AAA-201-KJ  ← most common (Lagos, Abuja, …)
-    (2, 3, 2),   # 7 chars: AA-123-BC
-    (3, 4, 2),   # 9 chars: AAA-1234-KJ
-    (2, 4, 2),   # 8 chars: AA-1234-BC
-    (3, 2, 2),   # 7 chars: AAA-12-BC
-    (3, 3, 3),   # 9 chars: AAA-201-KJA
-    (2, 2, 2),   # 6 chars: AA-12-BC
-    (1, 3, 2),   # 6 chars: A-123-BC
-    (3, 2, 3),   # 8 chars: AAA-12-BCD
-    (2, 3, 3),   # 8 chars: AA-123-BCD
-    (2, 2, 3),   # 7 chars: AA-12-BCD
-]
-
-
-def _correct_nigeria_plate(text: str) -> str:
+def _vehicle_region_provider(frame_bgr):
     """
-    Template-based OCR correction for Nigerian plates.
-
-    Tries every plausible L/D/L structure and scores each by how many input
-    characters are already the right type for their zone — the structure that
-    needs the fewest corrections wins.  This handles the common case where OCR
-    produces 'Z' or 'O' at digit positions: those are alphabetic, so a
-    boundary-scan approach wrongly extends the letter zone over them.
+    Try the vehicle-crop ROI first (faster, less background to confuse the
+    detector on a small plate), then fall back to the full frame. Vehicle
+    detection here reuses the existing YOLOv8n COCO vehicle model above —
+    this is unrelated to the plate-model mirror issue and is left as-is.
     """
-    clean = re.sub(r'[^A-Z0-9]', '', text.upper())
-    n = len(clean)
-    if n < 5 or n > 10:
-        return clean
-
-    best_score  = -9999
-    best_result = clean
-
-    for l1, d, l2 in _NG_STRUCTURES:
-        if l1 + d + l2 != n:
-            continue
-
-        corrected = ''
-        for j, c in enumerate(clean):
-            if j < l1:
-                corrected += _INT_TO_CHAR.get(c, c)   # digit→letter in letter zone
-            elif j < l1 + d:
-                corrected += _CHAR_TO_INT.get(c, c)   # letter→digit in digit zone
-            else:
-                corrected += _INT_TO_CHAR.get(c, c)   # digit→letter in letter zone
-
-        # Score: chars already in the right type for their zone cost 3;
-        # chars that needed correction cost 1 (both are acceptable, but prefer fewer corrections)
-        score = 0
-        for j, c_in in enumerate(clean):
-            in_letter = (j < l1) or (j >= l1 + d)
-            if in_letter:
-                score += 3 if c_in.isalpha() else 1
-            else:
-                score += 3 if c_in.isdigit() else 1
-
-        if _PLATE_RE.match(corrected):
-            score += 15   # strong bonus for matching the full Nigerian regex
-
-        if score > best_score:
-            best_score  = score
-            best_result = corrected
-
-    return best_result
+    regions = []
+    crop, bbox = detect_vehicle_crop(frame_bgr)
+    if bbox is not None:
+        x1, y1, _, _ = bbox
+        regions.append((crop, (x1, y1), "vehicle_roi"))
+    regions.append((frame_bgr, (0, 0), "full_frame"))
+    return regions
 
 
-def _get_ocr():
-    global _ocr_reader
-    with _ocr_lock:
-        if _ocr_reader is None:
-            try:
-                import easyocr
-                _ocr_reader = easyocr.Reader(['en'], gpu=False, verbose=False)
-            except Exception:
-                pass
-    return _ocr_reader
-
-
-def warm_up_ocr():
-    """Pre-load EasyOCR in a background thread so the first plate scan is instant."""
-    threading.Thread(target=_get_ocr, daemon=True).start()
-
-
-def _ocr_plate_crop(reader, bgr_crop) -> list:
+def detect_plate_multi_frame(frames: list, debug_session_id: str = None):
     """
-    OCR a plate crop. Runs CLAHE-enhanced + sharpened variants (2 passes max).
-    Returns list of (_, text, conf) tuples.
+    Run the full multi-frame ANPR pipeline (detector -> crop QA -> rectify
+    -> OCR -> safe correction -> consensus) and return a
+    anpr.models.PlateRecognitionResult. Never raises — a missing/broken
+    model or camera failure comes back as a NOT_DETECTED result with a
+    human-readable rejection_reason so manual entry can take over.
     """
-    ch, cw = bgr_crop.shape[:2]
-    if cw < 1 or ch < 1:
-        return []
-    gray = cv2.cvtColor(bgr_crop, cv2.COLOR_BGR2GRAY)
-    if cw < 320:
-        scale = 320 / cw
-        gray = cv2.resize(gray, None, fx=scale, fy=scale, interpolation=cv2.INTER_CUBIC)
-
-    clahe    = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(gray)
-
-    out  = []
-    seen = set()
-
-    # Pass 1: CLAHE-enhanced
-    try:
-        for det in reader.readtext(
-            enhanced,
-            allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
-            paragraph=False,
-        ):
-            key = det[1].upper()
-            if key not in seen:
-                seen.add(key)
-                out.append(det)
-    except Exception:
-        pass
-
-    # Pass 2: sharpened — only if pass 1 gave no confident plate candidates
-    already_good = any(
-        conf > 0.6 and len(re.sub(r'[^A-Z0-9]', '', t.upper())) >= 6
-        for (_, t, conf) in out
+    pipeline = get_pipeline()
+    return pipeline.process_frames(
+        frames, region_provider=_vehicle_region_provider,
+        debug_session_id=debug_session_id,
     )
-    if not already_good and NUMPY_AVAILABLE:
-        k     = np.array([[-1, -1, -1], [-1, 9, -1], [-1, -1, -1]])
-        sharp = cv2.filter2D(enhanced, -1, k)
-        try:
-            for det in reader.readtext(
-                sharp,
-                allowlist='ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-',
-                paragraph=False,
-            ):
-                key = det[1].upper()
-                if key not in seen:
-                    seen.add(key)
-                    out.append(det)
-        except Exception:
-            pass
-
-    return out
-
-
-def _ocr_hits_to_candidates(ocr_results, yolo_conf=1.0) -> list:
-    """
-    Convert raw easyocr results → (score, plate) candidates.
-    Applies Nigerian plate correction and format check.
-    """
-    candidates = []
-    for (_, text, ocr_conf) in ocr_results:
-        clean = re.sub(r'[^A-Z0-9]', '', text.upper())
-        if len(clean) < 5 or len(clean) > 10 or clean in _OVERLAY_WORDS:
-            continue
-        corrected = _correct_nigeria_plate(clean)
-        has_letters = any(c.isalpha() for c in corrected)
-        has_digits  = any(c.isdigit() for c in corrected)
-        if not (has_letters and has_digits):
-            continue
-        bonus = 0.5 if _PLATE_RE.match(corrected) else 0.0
-        score = (ocr_conf + bonus) * (0.4 + 0.6 * yolo_conf)
-        candidates.append((score, corrected))
-    return candidates
-
-
-def detect_plate_verbose(frame_bgr) -> tuple:
-    """
-    YOLO-first ANPR pipeline for Nigerian plates.
-
-    1. Resize frame to ≤640px wide before YOLO (faster inference, same accuracy).
-    2. YOLO plate detector → OCR top-3 crops (1–2 OCR passes each).
-    3. Fallback: lower-half + strip OCR scan if YOLO finds nothing.
-
-    Returns (plate_string, log_lines).
-    """
-    if not OPENCV_AVAILABLE:
-        return '', ['OpenCV not available']
-    reader = _get_ocr()
-    if reader is None:
-        return '', ['OCR reader unavailable']
-
-    hits  = []
-    cands = []
-
-    # Pre-resize to max 640px wide — speeds up YOLO inference significantly
-    h, w  = frame_bgr.shape[:2]
-    if w > 640:
-        scale      = 640 / w
-        work_frame = cv2.resize(frame_bgr, (640, int(h * scale)), interpolation=cv2.INTER_AREA)
-    else:
-        work_frame = frame_bgr
-    fh, fw = work_frame.shape[:2]
-
-    # ── PASS 1: YOLO plate detector on the resized frame ─────────────────────
-    model = _get_plate_yolo()
-    if model is not None:
-        try:
-            results = model(work_frame, conf=0.20, verbose=False)[0]
-            boxes   = results.boxes
-            if boxes is not None and len(boxes):
-                order = boxes.conf.cpu().numpy().argsort()[::-1]
-                hits.append(f"YOLO: {len(boxes)} plate region(s) detected")
-                for i in order[:3]:          # top-3 boxes by confidence
-                    x1, y1, x2, y2 = boxes.xyxy[i].cpu().numpy().astype(int)
-                    yconf = float(boxes.conf[i])
-                    pad   = 5
-                    crop  = work_frame[max(0, y1-pad):min(fh, y2+pad),
-                                       max(0, x1-pad):min(fw, x2+pad)]
-                    ocr_res = _ocr_plate_crop(reader, crop)
-                    for (_, text, oconf) in ocr_res:
-                        clean = re.sub(r'[^A-Z0-9]', '', text.upper())
-                        if clean:
-                            hits.append(f"  OCR: {clean!r} conf={oconf:.2f} yolo={yconf:.2f}")
-                    cands.extend(_ocr_hits_to_candidates(ocr_res, yolo_conf=yconf))
-            else:
-                hits.append("YOLO: no plate regions found")
-        except Exception as e:
-            hits.append(f"YOLO error: {e}")
-    else:
-        hits.append("YOLO model not loaded — using OCR fallback")
-
-    if cands:
-        cands.sort(reverse=True)
-        return cands[0][1], hits
-
-    # ── PASS 2: OCR fallback — lower half + middle strip only ────────────────
-    # Plates are almost always in the lower portion of the frame.
-    hits.append("Running OCR fallback scan…")
-
-    def _scan(bgr_crop, label):
-        ocr_res = _ocr_plate_crop(reader, bgr_crop)
-        for (_, text, conf) in ocr_res:
-            clean = re.sub(r'[^A-Z0-9]', '', text.upper())
-            if len(clean) >= 4:
-                hits.append(f"  [{label}] {clean!r} conf={conf:.2f}")
-        cands.extend(_ocr_hits_to_candidates(ocr_res))
-
-    _scan(work_frame[fh // 2:, :],                         'lower-half')
-    _scan(work_frame[int(fh * 0.55):int(fh * 0.90), :],   'strip')
-
-    if not cands:
-        return '', hits
-    cands.sort(reverse=True)
-    return cands[0][1], hits
 
 
 def detect_plate(frame_bgr) -> str:
-    plate, _ = detect_plate_verbose(frame_bgr)
-    return plate
+    """
+    Compatibility wrapper for call sites that only want a bare string from a
+    single frame (e.g. the exit page's live "anpr-now" quick check). Reuses
+    the same already-loaded detector/OCR singletons — a lightweight
+    single-frame consensus requirement is applied only for this call, no
+    model is reloaded.
+    """
+    if not OPENCV_AVAILABLE or frame_bgr is None:
+        return ""
+    pipeline = get_pipeline()
+    quick_config = dict(pipeline.config)
+    quick_config["plate_consensus_frames"] = 1
+    quick_pipeline = _anpr.PlateRecognitionPipeline(pipeline.detector, pipeline.ocr, quick_config)
+    result = quick_pipeline.process_frames([frame_bgr], region_provider=_vehicle_region_provider)
+    return _anpr.detect_plate_string(result)
 
 
 # ── VEHICLE COLOR ─────────────────────────────────────────────────────────────
@@ -597,9 +431,57 @@ def snap_vehicle_frame(cid: str) -> dict:
     return {"ok": True, "url": f"/gate/photo/vehicle_{cid}.jpg"}
 
 
+def _capture_plate_frame_burst(count: int, interval: float = 0.05) -> list:
+    """
+    Grab `count` consecutive raw frames from the running camera worker over
+    a short window (so a stable-but-not-frozen vehicle gets several looks),
+    then keep only the sharpest, best-exposed ones. Never depends on a
+    single frame.
+    """
+    frames = []
+    for _ in range(count):
+        with fm._cam_lock:
+            raw = fm._cam_state.get("raw")
+        if raw is not None:
+            frames.append(raw.copy())
+        time.sleep(interval)
+    return frames
+
+
+def _run_plate_recognition(cid: str, push, frames: list) -> dict:
+    """
+    Shared tail-end of both vehicle capture flows: run the multi-frame ANPR
+    pipeline, push the structured result over SSE, and stash it for
+    /gate/entry/confirm. Returns the result's API dict.
+    """
+    c = cfg.load()
+    frame_count = c.get("plate_capture_frame_count", 10)
+    best_frames = _anpr_pp.select_best_frames(frames, count=max(3, frame_count // 2))
+
+    push("step", f"Analysing {len(best_frames)} frame(s) for the plate…")
+    result = detect_plate_multi_frame(best_frames, debug_session_id=cid)
+
+    temp_set(cid, "plate_number", result.plate_number or "")
+    temp_set(cid, "plate_result", result.to_dict())
+    temp_set(cid, "plate_source", "auto" if result.plate_number else "")
+    temp_set(cid, "plate_confidence", result.overall_confidence)
+
+    api = result.to_api_dict()
+    if result.status == "CONFIRMED":
+        push("ok", f"Plate detected: {result.display_plate} "
+                    f"({result.consensus_count}/{result.total_frames} frames agree)", **api)
+    elif result.status == "LOW_CONFIDENCE":
+        push("warning", f"Low-confidence plate reading: {result.display_plate} — "
+                         f"please confirm or correct it", **api)
+    else:
+        push("warning", "No plate detected — enter manually", **api)
+    return api
+
+
 def run_vehicle_auto_capture(cid: str, on_complete):
     """
-    Auto-detect a vehicle in the live camera feed using YOLO, then capture and run ANPR.
+    Auto-detect a vehicle in the live camera feed using YOLO, then capture a
+    short burst of frames and run the ANPR pipeline across them.
     Mirrors how run_face_capture automatically captures when a face is detected.
     """
     def push(t, txt, **kw):
@@ -613,10 +495,9 @@ def run_vehicle_auto_capture(cid: str, on_complete):
         push("error", "Camera unavailable — check connection")
         on_complete(None); end_vehicle_session(cid); return
 
-    # Ensure YOLO model is present (downloads ~6 MB on first use)
-    if YOLO_AVAILABLE and not os.path.exists(_PLATE_MODEL_PATH):
-        download_plate_model(push_fn=push)
-        _get_plate_yolo()
+    if not get_pipeline().detector.is_ready():
+        push("warning", "Nigerian plate model not available — capture will still "
+                         "work, plate must be entered manually")
 
     vehicle_model = _get_vehicle_yolo()
     if vehicle_model is None:
@@ -681,26 +562,27 @@ def run_vehicle_auto_capture(cid: str, on_complete):
         push("error", "No vehicle detected — try again or capture manually")
         on_complete(None); end_vehicle_session(cid); return
 
-    # Save the captured frame
+    # Burst-capture several frames while the vehicle is stable — a single
+    # frame is never enough to trust a plate reading on.
+    c = cfg.load()
+    push("step", "Capturing frame burst…")
+    frames = _capture_plate_frame_burst(c.get("plate_capture_frame_count", 10))
+    if not frames:
+        frames = [captured_bgr]
+
+    # Save the sharpest frame as the vehicle photo shown in the UI.
+    best_for_photo = _anpr_pp.select_best_frames(frames, count=1)
+    photo_frame = best_for_photo[0] if best_for_photo else captured_bgr
     path = os.path.join(GATE_PHOTOS_DIR, f"vehicle_{cid}.jpg")
-    cv2.imwrite(path, captured_bgr)
+    cv2.imwrite(path, photo_frame)
     temp_set(cid, "vehicle_photo", path)
     push("ok", "Vehicle captured ✓")
 
-    # Run ANPR on the captured frame
-    push("step", "Detecting license plate…")
-    plate, log_lines = detect_plate_verbose(captured_bgr)
-    for line in log_lines:
-        push("info", line)
-    if plate:
-        push("ok", f"Plate detected: {plate}", plate=plate)
-    else:
-        push("warning", "No plate detected — enter manually", plate="")
-    temp_set(cid, "plate_number", plate or "")
+    api = _run_plate_recognition(cid, push, frames)
 
     push("success", "Analysis complete ✓",
          vehicle_url=f"/gate/photo/vehicle_{cid}.jpg",
-         plate=plate or "")
+         **api)
     on_complete(temp_get(cid))
     end_vehicle_session(cid)
 
@@ -724,24 +606,18 @@ def run_vehicle_capture(cid: str, on_complete):
         push("error", "Could not read vehicle photo file")
         on_complete(None); end_vehicle_session(cid); return
 
-    # Ensure YOLO model is present (downloads ~6 MB on first use)
-    if YOLO_AVAILABLE and not os.path.exists(_PLATE_MODEL_PATH):
-        download_plate_model(push_fn=push)
-        _get_plate_yolo()   # load into memory now
+    if not get_pipeline().detector.is_ready():
+        push("warning", "Nigerian plate model not available — plate must be entered manually")
 
     push("step", "Detecting license plate…")
-    plate, log_lines = detect_plate_verbose(bgr)
-    for line in log_lines:
-        push("info", line)
-    if plate:
-        push("ok", f"Plate detected: {plate}", plate=plate)
-    else:
-        push("warning", "No plate detected — enter manually", plate="")
-    temp_set(cid, "plate_number", plate or "")
+    # Only one still photo is available in this flow (no burst) — the
+    # pipeline will correctly report LOW_CONFIDENCE rather than CONFIRMED,
+    # since a single frame can never meet the multi-frame consensus bar.
+    api = _run_plate_recognition(cid, push, [bgr])
 
     push("success", "Analysis complete ✓",
          vehicle_url=f"/gate/photo/vehicle_{cid}.jpg",
-         plate=plate or "")
+         **api)
     on_complete(temp_get(cid))
     end_vehicle_session(cid)
 
