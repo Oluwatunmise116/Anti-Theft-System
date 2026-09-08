@@ -35,8 +35,8 @@ def init_db():
             next_of_kin_phone   TEXT,
             religion            TEXT,
             nationality         TEXT,
-            created_at          TEXT DEFAULT (datetime('now')),
-            updated_at          TEXT DEFAULT (datetime('now'))
+            created_at          TEXT DEFAULT (datetime('now','localtime')),
+            updated_at          TEXT DEFAULT (datetime('now','localtime'))
         );
 
         CREATE TABLE IF NOT EXISTS licenses (
@@ -49,7 +49,7 @@ def init_db():
             state_of_issue      TEXT NOT NULL,
             endorsements        TEXT,
             authorized_by       TEXT,
-            created_at          TEXT DEFAULT (datetime('now')),
+            created_at          TEXT DEFAULT (datetime('now','localtime')),
             FOREIGN KEY (holder_id) REFERENCES holders(id)
         );
 
@@ -57,7 +57,7 @@ def init_db():
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             holder_id           INTEGER NOT NULL UNIQUE,
             template_data       TEXT NOT NULL,
-            enrolled_at         TEXT DEFAULT (datetime('now')),
+            enrolled_at         TEXT DEFAULT (datetime('now','localtime')),
             FOREIGN KEY (holder_id) REFERENCES holders(id)
         );
 
@@ -66,7 +66,7 @@ def init_db():
             holder_id           INTEGER NOT NULL,
             photo_type          TEXT CHECK(photo_type IN ('passport', 'holder_signature', 'authorized_signature')),
             file_path           TEXT NOT NULL,
-            uploaded_at         TEXT DEFAULT (datetime('now')),
+            uploaded_at         TEXT DEFAULT (datetime('now','localtime')),
             FOREIGN KEY (holder_id) REFERENCES holders(id)
         );
 
@@ -77,7 +77,7 @@ def init_db():
             face_photo_path         TEXT,
             face_encoding           TEXT,
             fingerprint_template    TEXT,
-            entry_time              TEXT DEFAULT (datetime('now')),
+            entry_time              TEXT DEFAULT (datetime('now','localtime')),
             entry_gate              TEXT DEFAULT 'ENTRY',
             exit_time               TEXT,
             exit_gate               TEXT DEFAULT 'EXIT',
@@ -99,7 +99,7 @@ def init_db():
             fingerprint_template TEXT,
             status               TEXT DEFAULT 'INSIDE'
                                      CHECK(status IN ('INSIDE','EXITED','DENIED')),
-            entry_time           TEXT DEFAULT (datetime('now')),
+            entry_time           TEXT DEFAULT (datetime('now','localtime')),
             exit_time            TEXT,
             exit_face_photo_path TEXT,
             exit_result          TEXT,
@@ -318,7 +318,7 @@ def save_fingerprint(holder_id, template_data):
         VALUES (?, ?)
         ON CONFLICT(holder_id) DO UPDATE SET
             template_data=excluded.template_data,
-            enrolled_at=datetime('now')
+            enrolled_at=datetime('now','localtime')
     """, (holder_id, json.dumps(template_data)))
     conn.commit()
     conn.close()
@@ -373,13 +373,13 @@ def get_stats():
     stats["total_licenses"] = c.fetchone()["total"]
     c.execute("SELECT COUNT(*) as total FROM fingerprints")
     stats["total_fingerprints"] = c.fetchone()["total"]
-    c.execute("SELECT COUNT(*) as total FROM licenses WHERE expiry_date < date('now')")
+    c.execute("SELECT COUNT(*) as total FROM licenses WHERE expiry_date < date('now','localtime')")
     stats["expired"] = c.fetchone()["total"]
-    c.execute("SELECT COUNT(*) as total FROM licenses WHERE expiry_date BETWEEN date('now') AND date('now', '+30 days')")
+    c.execute("SELECT COUNT(*) as total FROM licenses WHERE expiry_date BETWEEN date('now','localtime') AND date('now','localtime', '+30 days')")
     stats["expiring_soon"] = c.fetchone()["total"]
     c.execute("SELECT COUNT(*) as total FROM trips WHERE status='INSIDE'")
     stats["active_trips"] = c.fetchone()["total"]
-    c.execute("SELECT COUNT(*) as total FROM trips WHERE date(entry_time)=date('now')")
+    c.execute("SELECT COUNT(*) as total FROM trips WHERE date(entry_time)=date('now','localtime')")
     stats["today_trips"] = c.fetchone()["total"]
     conn.close()
     return stats
@@ -467,7 +467,7 @@ def close_trip(trip_id, exit_result, exit_face_photo_path, face_distance):
     old = c.fetchone()
     c.execute("""
         UPDATE trips SET
-            status=?, exit_time=datetime('now'),
+            status=?, exit_time=datetime('now','localtime'),
             exit_face_photo_path=NULL, exit_result=?,
             face_distance=?,
             face_encoding=NULL, fingerprint_template=NULL,

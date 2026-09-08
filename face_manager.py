@@ -209,6 +209,87 @@ def get_camera_resolution() -> tuple:
     with _cam_lock:
         return _cam_state.get("width", 0), _cam_state.get("height", 0)
 
+
+# ── CAMERA RECONNECT ──────────────────────────────────────────────────────────
+# A loose USB connector (or a knocked cable) makes the camera vanish
+# mid-stream: cap.read() starts failing and, on replug, the device may
+# re-enumerate at a DIFFERENT /dev/video index. The worker therefore never
+# trusts one open() for its lifetime — it counts consecutive read failures,
+# releases the dead handle, and re-discovers the camera, forever.
+READ_FAILURES_BEFORE_RECONNECT = 25   # ~1.3s of failed reads → declare it lost
+RECONNECT_RETRY_SECONDS        = 2.0  # pause between rediscovery attempts
+STARTUP_GIVEUP_SECONDS         = 12   # no camera EVER seen → give up (UI 503s)
+
+
+def _candidate_indices() -> list:
+    """
+    Camera indices to try, configured index first, then every /dev/video*
+    capture node that isn't a Pi ISP/codec device. Covers the camera coming
+    back on a different index after USB re-enumeration.
+    """
+    indices = [USB_CAMERA_INDEX]
+    try:
+        names = _v4l2_device_names()
+        for path in sorted(glob.glob("/dev/video*")):
+            try:
+                idx = int(path.replace("/dev/video", ""))
+            except ValueError:
+                continue
+            name = names.get(path, "")
+            if any(skip in name.lower() for skip in ("pispbe", "hevc", "isp", "codec")):
+                continue
+            if idx not in indices and idx < 10:
+                indices.append(idx)
+    except Exception:
+        pass
+    return indices
+
+
+def _open_camera():
+    """
+    One full attempt to open the camera: try each candidate index, negotiate
+    format/resolution, verify frames actually flow. Returns (cap, index,
+    width, height) or (None, None, 0, 0). Never raises.
+    """
+    for idx in _candidate_indices():
+        if not _try_open(idx):     # cheap probe, suppresses OpenCV stderr spam
+            continue
+        cap = cv2.VideoCapture(idx)
+        if not cap.isOpened():
+            cap.release()
+            continue
+        requested_w = cfg.get("camera_width", REQUESTED_CAMERA_WIDTH)
+        requested_h = cfg.get("camera_height", REQUESTED_CAMERA_HEIGHT)
+        actual_w, actual_h = negotiate_camera_resolution(cap, requested_w, requested_h)
+        cap.set(cv2.CAP_PROP_FPS, 30)
+
+        ret, warm_frame = False, None
+        for _ in range(5):   # warmup — discard first frames so exposure settles
+            ret, warm_frame = cap.read()
+        if not ret or warm_frame is None:
+            cap.release()
+            continue
+
+        # Confirm against a real captured frame — some backends only report
+        # the true negotiated size once frames are actually flowing.
+        actual_h, actual_w = warm_frame.shape[:2]
+        fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
+        fourcc_str = "".join(chr((fourcc >> 8 * i) & 0xFF) for i in range(4)).strip("\x00 ")
+        print(f"[face_manager] Camera opened at index {idx}: "
+              f"format {fourcc_str or 'unknown'}, resolution {actual_w}x{actual_h}"
+              + ("" if (actual_w, actual_h) == (requested_w, requested_h)
+                 else f" (requested {requested_w}x{requested_h})"),
+              flush=True)
+        return cap, idx, actual_w, actual_h
+    return None, None, 0, 0
+
+
+def _interruptible_sleep(seconds: float):
+    """Sleep in small chunks so stop_camera() stays responsive."""
+    deadline = time.time() + seconds
+    while time.time() < deadline and _cam_running.is_set():
+        time.sleep(0.1)
+
 # ── CAPTURE PIPE ──────────────────────────────────────────────────────────────
 _capture_event = threading.Event()        # set = worker should capture next frame
 _frame_queue   = queue.Queue(maxsize=1)   # captured RGB frame lands here
@@ -227,42 +308,52 @@ def _camera_worker():
         cv2.data.haarcascades + "haarcascade_frontalface_default.xml"
     )
 
-    cap = cv2.VideoCapture(USB_CAMERA_INDEX)
-    if not cap.isOpened():
-        _cam_running.clear()
-        return
-
-    requested_w = cfg.get("camera_width", REQUESTED_CAMERA_WIDTH)
-    requested_h = cfg.get("camera_height", REQUESTED_CAMERA_HEIGHT)
-    actual_w, actual_h = negotiate_camera_resolution(cap, requested_w, requested_h)
-    cap.set(cv2.CAP_PROP_FPS, 30)
-
-    for _ in range(5):   # warmup — discard first frames so exposure settles
-        ret, warm_frame = cap.read()
-
-    # Confirm against a real captured frame — some backends only report the
-    # true negotiated size once frames are actually flowing, and some
-    # cameras silently fall back to a resolution near, but not exactly, the
-    # one requested.
-    if ret and warm_frame is not None:
-        actual_h, actual_w = warm_frame.shape[:2]
-    fourcc = int(cap.get(cv2.CAP_PROP_FOURCC))
-    fourcc_str = "".join(chr((fourcc >> 8 * i) & 0xFF) for i in range(4)).strip("\x00 ")
-    print(f"[face_manager] Camera format {fourcc_str or 'unknown'}, "
-          f"resolution {actual_w}x{actual_h}"
-          + ("" if (actual_w, actual_h) == (requested_w, requested_h)
-             else f" (requested {requested_w}x{requested_h})"),
-          flush=True)
-    with _cam_lock:
-        _cam_state["width"]  = actual_w
-        _cam_state["height"] = actual_h
+    cap = None
+    ever_opened = False
+    started = time.time()
+    read_failures = 0
 
     try:
         while _cam_running.is_set():
+            # (Re)connect: no live handle — discover and open the camera.
+            if cap is None:
+                cap, cam_idx, actual_w, actual_h = _open_camera()
+                if cap is None:
+                    if not ever_opened and time.time() - started > STARTUP_GIVEUP_SECONDS:
+                        # No camera has EVER answered — bail out so callers
+                        # get a clear "camera unavailable" instead of a
+                        # worker that looks alive but streams nothing.
+                        print("[face_manager] No camera found at startup — giving up",
+                              flush=True)
+                        return
+                    _interruptible_sleep(RECONNECT_RETRY_SECONDS)
+                    continue
+                ever_opened = True
+                read_failures = 0
+                with _cam_lock:
+                    _cam_state["width"]  = actual_w
+                    _cam_state["height"] = actual_h
+
             ret, frame = cap.read()
             if not ret or frame is None:
-                time.sleep(0.05)
+                read_failures += 1
+                if read_failures >= READ_FAILURES_BEFORE_RECONNECT:
+                    # Camera vanished mid-stream (loose USB connector, cable
+                    # knock). Release the dead handle and blank the shared
+                    # frames so consumers see "no feed" rather than silently
+                    # reusing a stale frame; then re-discover, forever.
+                    print("[face_manager] Camera stopped delivering frames — "
+                          "reconnecting…", flush=True)
+                    cap.release()
+                    cap = None
+                    with _cam_lock:
+                        _cam_state["frame"] = None
+                        _cam_state["raw"]   = None
+                    _interruptible_sleep(RECONNECT_RETRY_SECONDS)
+                else:
+                    time.sleep(0.05)
                 continue
+            read_failures = 0
 
             raw = frame.copy()   # clean frame before any overlays — used for capture/ANPR
 
@@ -322,7 +413,8 @@ def _camera_worker():
             time.sleep(0.033)
 
     finally:
-        cap.release()
+        if cap is not None:
+            cap.release()
         with _cam_lock:
             _cam_state["frame"] = None
             _cam_state["raw"]   = None
