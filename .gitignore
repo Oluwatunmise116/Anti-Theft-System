@@ -20,3 +20,54 @@ gate_photos/debug/
 # plate_detector_summary, plate_export_benchmark, local_evaluation_*) are
 # intentionally NOT ignored — they are the audited evidence of real
 # training/evaluation runs and should be committed after each run.
+
+# Vehicle attribute models — downloaded weights and exports. Hundreds of MB,
+# reproducible from models/vehicle_attributes/model_lock.json with
+# scripts/prepare_vehicle_models.py. The lock file itself IS committed: it
+# is the record of exactly which commit of each model a deployment runs.
+# Superseded Hugging Face attribute weights — no longer used by anything.
+models/vehicle_attributes/
+
+# Trained attribute + logo weights: reproducible from
+# scripts/train_vehicle_attributes.py, never committed.
+models/vehicle_attributes_mnv3.pt
+models/vehicle_logo_detector.pt
+runs/vehicle_attributes/
+
+# The retired implementation, kept only until the operator deletes it.
+superseded/
+
+# Hugging Face / torch caches, wherever they land in the project tree.
+# Deliberately NOT a blanket *.onnx / *.pth rule: the face detection and
+# recognition ONNX models under models/ are committed project assets, and a
+# global glob would silently shadow them.
+.cache/
+huggingface/
+.huggingface/
+models/**/*.safetensors
+models/**/*.pth
+models/vehicle_attributes/**/*.onnx
+
+# Generated databases and their backups — real gate records, never committed
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.db.bak*
+license.db*
+# Automatic pre-migration backups (database.backup_database)
+backups/
+# Runtime state: the development SMS mock outbox (it contains OTP codes)
+instance/
+
+# Captured gate imagery — personal information (vehicles, faces, plates)
+gate_photos/
+photos/
+signatures/
+
+# (datasets/ is already excluded above — local ground-truth label sets live
+# there and may reference personal captures.)
+
+# Vehicle attribute benchmark/evaluation reports ARE committed (they are the
+# audited evidence of real measured runs) — see the note above about
+# reports/. Nothing further to ignore there.

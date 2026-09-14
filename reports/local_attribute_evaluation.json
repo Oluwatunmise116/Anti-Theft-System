@@ -1,0 +1,886 @@
+{
+  "num_labelled_rows": 1,
+  "num_evaluated": 1,
+  "labelled_per_attribute": {
+    "colour": 1,
+    "type": 1,
+    "brand": 1
+  },
+  "model_status": {
+    "enabled": true,
+    "heads_enabled": {
+      "colour": true,
+      "type": true,
+      "brand": true
+    },
+    "classifier": {
+      "model_path": "/home/user/Desktop/database/models/vehicle_attributes_mnv3.pt",
+      "model_format": "pytorch",
+      "model_present": false,
+      "model_loaded": false,
+      "trained": false,
+      "version": "unloaded",
+      "input_size": 224,
+      "load_error": null
+    },
+    "logo_detector": {
+      "model_path": "/home/user/Desktop/database/models/vehicle_logo_detector.pt",
+      "model_format": "pytorch",
+      "model_present": false,
+      "model_loaded": false,
+      "load_error": null
+    },
+    "vehicle_detector": {
+      "model_path": "yolov8n.pt",
+      "model_loaded": false,
+      "load_error": null
+    },
+    "latency_budget_ms": 150.0,
+    "label_space_sizes": {
+      "colour": 12,
+      "type": 10,
+      "brand": 13
+    }
+  },
+  "overall": {
+    "num_images": 1,
+    "localisation_rate": 1.0,
+    "colour": {
+      "n": 1,
+      "answered": 0,
+      "abstained": 1,
+      "abstention_rate": 1.0,
+      "accuracy_on_answered": null,
+      "accuracy_over_all": 0.0,
+      "macro_precision": 0.0,
+      "macro_recall": 0.0,
+      "macro_f1": 0.0,
+      "per_class": {
+        "red": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 1
+        }
+      },
+      "confusion_matrix": {
+        "red": {
+          "(abstained)": 1
+        }
+      },
+      "escape_class": {
+        "escape_label": "unknown",
+        "predicted_count": 0,
+        "predicted_rate": 0.0,
+        "true_count": 0,
+        "recall_on_escape_class": null
+      }
+    },
+    "type": {
+      "n": 1,
+      "answered": 0,
+      "abstained": 1,
+      "abstention_rate": 1.0,
+      "accuracy_on_answered": null,
+      "accuracy_over_all": 0.0,
+      "macro_precision": 0.0,
+      "macro_recall": 0.0,
+      "macro_f1": 0.0,
+      "per_class": {
+        "sedan": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 1
+        }
+      },
+      "confusion_matrix": {
+        "sedan": {
+          "(abstained)": 1
+        }
+      },
+      "escape_class": {
+        "escape_label": "other",
+        "predicted_count": 0,
+        "predicted_rate": 0.0,
+        "true_count": 0,
+        "recall_on_escape_class": null
+      }
+    },
+    "brand": {
+      "n": 1,
+      "answered": 0,
+      "abstained": 1,
+      "abstention_rate": 1.0,
+      "accuracy_on_answered": null,
+      "accuracy_over_all": 0.0,
+      "macro_precision": 0.0,
+      "macro_recall": 0.0,
+      "macro_f1": 0.0,
+      "per_class": {
+        "toyota": {
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "support": 1
+        }
+      },
+      "confusion_matrix": {
+        "toyota": {
+          "(abstained)": 1
+        }
+      },
+      "escape_class": {
+        "escape_label": "other",
+        "predicted_count": 0,
+        "predicted_rate": 0.0,
+        "true_count": 0,
+        "recall_on_escape_class": null
+      },
+      "top3_accuracy": 0.0,
+      "top1_accuracy": 0.0
+    },
+    "latency_ms": {
+      "mean": 921.46,
+      "median": 921.46
+    }
+  },
+  "by_category": {
+    "lighting": {
+      "daylight": {
+        "num_images": 1,
+        "localisation_rate": 1.0,
+        "colour": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "red": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "red": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "unknown",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "type": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "sedan": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "sedan": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "brand": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "toyota": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "toyota": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          },
+          "top3_accuracy": 0.0,
+          "top1_accuracy": 0.0
+        },
+        "latency_ms": {
+          "mean": 921.46,
+          "median": 921.46
+        }
+      }
+    },
+    "distance": {
+      "near": {
+        "num_images": 1,
+        "localisation_rate": 1.0,
+        "colour": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "red": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "red": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "unknown",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "type": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "sedan": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "sedan": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "brand": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "toyota": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "toyota": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          },
+          "top3_accuracy": 0.0,
+          "top1_accuracy": 0.0
+        },
+        "latency_ms": {
+          "mean": 921.46,
+          "median": 921.46
+        }
+      }
+    },
+    "tilt": {
+      "upright": {
+        "num_images": 1,
+        "localisation_rate": 1.0,
+        "colour": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "red": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "red": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "unknown",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "type": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "sedan": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "sedan": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "brand": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "toyota": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "toyota": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          },
+          "top3_accuracy": 0.0,
+          "top1_accuracy": 0.0
+        },
+        "latency_ms": {
+          "mean": 921.46,
+          "median": 921.46
+        }
+      }
+    },
+    "blur": {
+      "sharp": {
+        "num_images": 1,
+        "localisation_rate": 1.0,
+        "colour": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "red": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "red": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "unknown",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "type": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "sedan": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "sedan": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "brand": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "toyota": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "toyota": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          },
+          "top3_accuracy": 0.0,
+          "top1_accuracy": 0.0
+        },
+        "latency_ms": {
+          "mean": 921.46,
+          "median": 921.46
+        }
+      }
+    },
+    "glare": {
+      "none": {
+        "num_images": 1,
+        "localisation_rate": 1.0,
+        "colour": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "red": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "red": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "unknown",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "type": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "sedan": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "sedan": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "brand": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "toyota": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "toyota": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          },
+          "top3_accuracy": 0.0,
+          "top1_accuracy": 0.0
+        },
+        "latency_ms": {
+          "mean": 921.46,
+          "median": 921.46
+        }
+      }
+    },
+    "plate_position": {
+      "front": {
+        "num_images": 1,
+        "localisation_rate": 1.0,
+        "colour": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "red": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "red": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "unknown",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "type": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "sedan": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "sedan": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "brand": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "toyota": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "toyota": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          },
+          "top3_accuracy": 0.0,
+          "top1_accuracy": 0.0
+        },
+        "latency_ms": {
+          "mean": 921.46,
+          "median": 921.46
+        }
+      }
+    },
+    "is_screen_replay": {
+      "False": {
+        "num_images": 1,
+        "localisation_rate": 1.0,
+        "colour": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "red": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "red": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "unknown",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "type": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "sedan": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "sedan": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          }
+        },
+        "brand": {
+          "n": 1,
+          "answered": 0,
+          "abstained": 1,
+          "abstention_rate": 1.0,
+          "accuracy_on_answered": null,
+          "accuracy_over_all": 0.0,
+          "macro_precision": 0.0,
+          "macro_recall": 0.0,
+          "macro_f1": 0.0,
+          "per_class": {
+            "toyota": {
+              "precision": 0.0,
+              "recall": 0.0,
+              "f1": 0.0,
+              "support": 1
+            }
+          },
+          "confusion_matrix": {
+            "toyota": {
+              "(abstained)": 1
+            }
+          },
+          "escape_class": {
+            "escape_label": "other",
+            "predicted_count": 0,
+            "predicted_rate": 0.0,
+            "true_count": 0,
+            "recall_on_escape_class": null
+          },
+          "top3_accuracy": 0.0,
+          "top1_accuracy": 0.0
+        },
+        "latency_ms": {
+          "mean": 921.46,
+          "median": 921.46
+        }
+      }
+    }
+  },
+  "note": "Measured on THIS gate's own locally labelled images. Not a public-benchmark number and not transferable to another camera, mounting angle or lighting regime. Screen-replay rows are excluded."
+}

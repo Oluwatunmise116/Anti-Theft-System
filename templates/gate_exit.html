@@ -15,6 +15,29 @@
 .step-label.active { color:var(--text); }
 .step-label.done   { color:var(--green); }
 .step-body { padding-left:36px; }
+
+/* ── Vehicle attribute comparison ────────────────────────────────────── */
+.cmp-row { display:grid; grid-template-columns:70px 1fr 1fr 78px; gap:8px;
+           align-items:center; padding:7px 0; border-bottom:1px solid var(--border-subtle); }
+.cmp-row:last-child { border-bottom:none; }
+.cmp-head { font-size:9px; color:var(--text-mute); text-transform:uppercase;
+            letter-spacing:1px; padding-bottom:4px; border-bottom:1px solid var(--border); }
+.cmp-key  { font-size:11px; color:var(--text-mute); text-transform:uppercase;
+            letter-spacing:.8px; }
+.cmp-val  { font-size:13px; font-weight:600; display:flex; align-items:center; gap:6px;
+            min-width:0; }
+.cmp-val span.txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.cmp-swatch { width:11px; height:11px; border-radius:3px; flex-shrink:0;
+              border:1px solid var(--border-strong); }
+.cmp-note { margin-top:9px; padding:8px 10px; border-radius:7px; font-size:11.5px; }
+.cmp-note.warn { background:var(--amber-wash); color:var(--amber);
+                 border:1px solid rgba(245,158,11,.25); }
+.cmp-note.info { background:var(--bg-2); color:var(--text-mute);
+                 border:1px solid var(--border); }
+@media (max-width:640px) {
+    .cmp-row { grid-template-columns:1fr 1fr 70px; }
+    .cmp-row .cmp-key { grid-column:1 / -1; }
+}
 </style>
 
 <div class="page-header">
@@ -96,6 +119,24 @@
         </div>
     </div>
 
+    <!-- Vehicle attribute comparison (entry vs exit) -->
+    <div class="card" id="attr-cmp-card" style="display:none;">
+        <div class="card-header" style="margin-bottom:10px;">
+            <div>
+                <div class="card-title">Vehicle Attributes</div>
+                <div class="card-sub">Entry record compared with the exit capture</div>
+            </div>
+        </div>
+        <div class="cmp-row cmp-head">
+            <div>Attribute</div><div>At Entry</div><div>At Exit</div><div>Result</div>
+        </div>
+        <div id="cmp-body"></div>
+        <div class="cmp-note info" id="cmp-note">
+            Supporting evidence only — attribute differences never deny an exit.
+            Face, fingerprint or the trip's fallback remain the exit requirement.
+        </div>
+    </div>
+
     <!-- Analysis log -->
     <div class="card" id="log-card" style="display:none;">
         <div class="card-header" style="margin-bottom:10px;">
@@ -138,10 +179,28 @@
                         <path d="M5 8V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>
                     Auto-Detect Vehicle
                 </button>
+                <button id="btn-upload" class="btn btn-outline btn-sm" onclick="chooseVehicleImage()">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"
+                         viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Upload Image
+                </button>
+                <input id="vehicle-file" type="file" accept="image/jpeg,image/png"
+                       style="display:none;" onchange="uploadVehicleImage(this)">
                 <button id="btn-retake" class="btn btn-ghost btn-sm" style="display:none;" onclick="startAutoDetect()">
                     ↩ Retry
                 </button>
                 <span id="v1-status" style="font-size:11.5px;color:var(--text-mute);"></span>
+            </div>
+
+            <!-- Image provenance: an uploaded photo is not proof of presence -->
+            <div id="image-source-note" style="display:none;margin-bottom:10px;
+                 padding:7px 10px;border-radius:7px;font-size:11px;
+                 background:var(--amber-wash);color:var(--amber);
+                 border:1px solid rgba(245,158,11,.25);">
+                Analysing an uploaded image. This is not evidence the vehicle is at
+                the gate. Exit still requires a face or fingerprint match, or the trip's
+                fallback.
             </div>
 
             <!-- ANPR result panel -->
@@ -228,7 +287,8 @@
         </div>
     </div>
 
-    <!-- OTP PASSCODE — delegate exit -->
+    <!-- EXIT VERIFICATION — required. The method comes from the identity
+         recorded at entry and is enforced by the server on every route. -->
     <div class="card" id="card-otp" style="opacity:.45;pointer-events:none;">
         <div class="step-header">
             <div class="step-num" id="num-otp">
@@ -237,40 +297,59 @@
                     <path d="M7 11V7a5 5 0 0 1 10 0v4"/>
                 </svg>
             </div>
-            <div class="step-label" id="lbl-otp">Passcode — Delegate Exit</div>
+            <div class="step-label" id="lbl-otp">Fallback — if face and fingerprint fail</div>
+            <span id="verify-mode-badge" class="badge badge-grey" style="margin-left:auto;font-size:10.5px;">—</span>
         </div>
         <div class="step-body">
-            <div style="font-size:12px;color:var(--text-mute);margin-bottom:10px;">
-                Enter the passcode the driver set at entry. A face photo will be captured for audit.
+            {% if mock_delivery %}
+            <div class="cmp-note warn" style="margin:0 0 10px;">
+                DEVELOPMENT MODE — SMS delivery is mocked. No real SMS is sent.
             </div>
-            <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
-                <input id="otp-input" type="text" inputmode="numeric" maxlength="8"
-                       placeholder="Driver's code"
-                       style="font-family:'DM Mono',monospace;font-size:15px;letter-spacing:2px;
-                              width:170px;text-align:center;padding:8px 10px;">
-                <button id="btn-otp-verify" class="btn btn-gold btn-sm" onclick="verifyOTP()">
-                    Verify Passcode
-                </button>
+            {% endif %}
+            <div id="verify-intro" style="font-size:12px;color:var(--text-mute);margin-bottom:10px;">
+                Look up the vehicle. Use face or fingerprint first; the fallback appears here.
             </div>
-            <div id="otp-status" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
 
-            <!-- Audit face capture — shown after OTP is accepted -->
-            <div id="otp-face-panel" style="display:none;">
-                <div style="font-size:11px;color:var(--text-mute);margin-bottom:6px;">
-                    Capturing exit face for audit record…
+            <!-- Registered driver: Robase SMS one-time code -->
+            <div id="otp-panel" style="display:none;">
+                <div id="otp-destination" style="font-size:12px;color:var(--text-dim);margin-bottom:8px;"></div>
+                <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap;">
+                    <button id="btn-otp-send" class="btn btn-gold btn-sm" onclick="sendOTP()">
+                        Send SMS OTP
+                    </button>
+                    <span id="otp-timer" style="font-size:11px;color:var(--text-mute);"></span>
                 </div>
-                <div class="photo-box" style="width:100%;height:130px;margin-bottom:6px;background:#000;">
-                    <img id="otp-face-stream" src="" style="display:none;width:100%;height:100%;object-fit:contain;">
-                    <img id="otp-face-photo" src="" style="display:none;width:100%;height:100%;object-fit:cover;">
-                    <div id="otp-face-ph" class="photo-placeholder">
-                        <svg width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.5"
-                             viewBox="0 0 24 24"><circle cx="12" cy="8" r="4"/>
-                            <path d="M9 12a5 5 0 0 0-5 5v1h16v-1a5 5 0 0 0-5-5"/></svg>
-                        <span style="font-size:9px;color:var(--text-mute);">Scanning…</span>
-                    </div>
+                <div id="otp-delivery" style="font-size:11px;color:var(--text-mute);margin-bottom:6px;"></div>
+                <div id="otp-entry" style="display:none;gap:8px;align-items:center;margin-bottom:8px;">
+                    <input id="otp-input" type="text" inputmode="numeric" autocomplete="one-time-code"
+                           maxlength="6" placeholder="6-digit code"
+                           onkeydown="if(event.key==='Enter') verifyOTP()"
+                           style="font-family:'DM Mono',monospace;font-size:15px;letter-spacing:3px;
+                                  width:170px;text-align:center;padding:8px 10px;">
+                    <button id="btn-otp-verify" class="btn btn-gold btn-sm" onclick="verifyOTP()">
+                        Verify code
+                    </button>
                 </div>
-                <div id="otp-face-status" style="font-size:11px;color:var(--text-mute);"></div>
             </div>
+
+            <!-- Guest driver: passcode set at entry -->
+            <div id="passcode-panel" style="display:none;">
+                <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+                    <input id="passcode-input" type="password" inputmode="numeric" autocomplete="off"
+                           maxlength="8" placeholder="Driver's passcode"
+                           onkeydown="if(event.key==='Enter') verifyPasscode()"
+                           style="font-family:'DM Mono',monospace;font-size:15px;letter-spacing:3px;
+                                  width:170px;text-align:center;padding:8px 10px;">
+                    <button id="btn-passcode-verify" class="btn btn-gold btn-sm" onclick="verifyPasscode()">
+                        Verify passcode
+                    </button>
+                </div>
+            </div>
+
+            <!-- Unresolved, legacy, locked or not enrolled: an administrator must act -->
+            <div id="review-panel" class="cmp-note warn" style="display:none;margin:0 0 8px;"></div>
+
+            <div id="otp-status" style="font-size:12px;min-height:16px;margin-bottom:6px;"></div>
         </div>
     </div>
 
@@ -286,7 +365,10 @@ let tripFound     = false;
 let exitGranted   = false;   // a server-verified exit authorization has been consumed
 let faceBusy      = false;
 let currentTripId = null;
-let exitPhotoPath = null;    // saved when face is captured
+let verification  = null;    // the server's verification view for this trip
+let otpSent       = false;
+let resendTimer   = null;
+let deliveryTimer = null;
 
 // ── ANPR RESULT PANEL ─────────────────────────────────────────────────────────
 
@@ -344,101 +426,272 @@ function activateOTP() {
     document.getElementById('lbl-otp').className = 'step-label active';
 }
 
-// ── OTP PASSCODE EXIT ─────────────────────────────────────────────────────────
+// ── EXIT VERIFICATION ─────────────────────────────────────────────────────────
+// Face and fingerprint (steps 2-3) come first: a match against this trip's own
+// entry capture authorizes the exit on the server. The fallback card below
+// shows the method the server fixed from the identity recorded at entry — an
+// SMS code for a registered driver, the passcode for a guest — and every route
+// enforces it. This code only shows the matching controls.
 
-function verifyOTP() {
-    const code     = document.getElementById('otp-input').value.trim();
-    const statusEl = document.getElementById('otp-status');
-    if (!currentTripId) {
-        statusEl.style.color = 'var(--red)';
-        statusEl.textContent = 'Look up the vehicle plate first.';
+function setVerifyStatus(text, color) {
+    const el = document.getElementById('otp-status');
+    el.style.color = color || 'var(--text-mute)';
+    el.textContent = text || '';
+}
+
+function setModeBadge(cls, text) {
+    const badge = document.getElementById('verify-mode-badge');
+    badge.className = 'badge ' + cls;
+    badge.textContent = text;
+}
+
+function showReview(text) {
+    const panel = document.getElementById('review-panel');
+    panel.textContent = text;
+    panel.style.display = '';
+}
+
+function resetVerification() {
+    verification = null;
+    otpSent = false;
+    stopResendCountdown();
+    ['otp-panel', 'passcode-panel', 'review-panel'].forEach(id => {
+        document.getElementById(id).style.display = 'none';
+    });
+    document.getElementById('otp-entry').style.display = 'none';
+    document.getElementById('otp-input').value = '';
+    document.getElementById('passcode-input').value = '';
+    stopDeliveryPolling();
+    document.getElementById('otp-delivery').textContent = '';
+    document.getElementById('btn-otp-send').textContent = 'Send SMS OTP';
+    document.getElementById('btn-otp-verify').disabled = false;
+    document.getElementById('btn-passcode-verify').disabled = false;
+    document.getElementById('verify-intro').textContent =
+        'Look up the vehicle. Use face or fingerprint first; the fallback appears here.';
+    setModeBadge('badge-grey', '—');
+    setVerifyStatus('');
+}
+
+function renderVerification(v) {
+    resetVerification();
+    verification = v || null;
+    if (!v) return;
+    const intro = document.getElementById('verify-intro');
+
+    // Verified on this screen already, e.g. just before a page reload.
+    if (v.authorized) {
+        grantExit('Verification already completed on this screen');
         return;
     }
-    if (!/^\d{4,8}$/.test(code)) {
-        statusEl.style.color = 'var(--red)';
-        statusEl.textContent = 'Enter a 4–8 digit passcode.';
+    if (v.reconciliation_required) {
+        setModeBadge('badge-amber', 'Review required');
+        intro.textContent = 'Use face or fingerprint. This trip has no fallback yet.';
+        showReview(v.identity_status === 'LEGACY_UNRESOLVED'
+            ? 'This trip was logged before driver identity was recorded. If face and fingerprint '
+              + 'cannot clear it, an administrator must reconcile it in Verification Review.'
+            : 'The driver\'s identity was not resolved at entry. If face and fingerprint cannot '
+              + 'clear it, an administrator must reconcile the trip in Verification Review.');
         return;
     }
-    statusEl.style.color = 'var(--text-mute)';
-    statusEl.textContent = 'Verifying…';
-    document.getElementById('btn-otp-verify').disabled = true;
+    if (v.locked) {
+        setModeBadge('badge-red', 'Locked');
+        intro.textContent = 'Use face or fingerprint. The fallback is locked.';
+        showReview('Too many failed code or passcode attempts. An administrator must review this '
+                   + 'trip in Verification Review.');
+        return;
+    }
 
-    fetch('/gate/exit/otp/verify', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({trip_id: currentTripId, code}),
-    }).then(r => r.json()).then(d => {
-        if (!d.valid) {
-            statusEl.style.color = 'var(--red)';
-            statusEl.textContent = d.error || 'Incorrect passcode.';
-            document.getElementById('btn-otp-verify').disabled = false;
+    if (v.mode === 'SMS_OTP') {
+        const sms = v.sms || {};
+        const length = sms.code_length || 6;
+        setModeBadge('badge-green', 'SMS OTP');
+        intro.textContent = 'Registered driver: ' + (v.driver_name || '—')
+            + '. Use face or fingerprint first; if they fail, send an SMS code to the driver.';
+        if (!sms.available) {
+            showReview('The driver\'s record has no valid phone number, so no SMS code can be sent. '
+                       + 'Use face or fingerprint, or ask an administrator to correct the number. '
+                       + 'Registered drivers cannot use the guest passcode.');
             return;
         }
-        statusEl.style.color = 'var(--green)';
-        statusEl.textContent = 'Passcode accepted ✓ — capturing audit photo…';
-        document.getElementById('num-otp').className = 'step-num done';
-        document.getElementById('num-otp').innerHTML = '✓';
-        document.getElementById('lbl-otp').className = 'step-label done';
-        log('ok', 'Passcode verified — capturing exit face for audit');
-        document.getElementById('otp-face-panel').style.display = '';
-        startOTPFaceCapture();
+        document.getElementById('otp-destination').textContent =
+            'The code goes to ' + sms.destination_hint + ', the number on the driver\'s record.';
+        const input = document.getElementById('otp-input');
+        input.maxLength = length;
+        input.placeholder = length + '-digit code';
+        document.getElementById('otp-panel').style.display = '';
+        if (sms.active) {
+            otpSent = true;
+            document.getElementById('otp-entry').style.display = 'flex';
+            document.getElementById('btn-otp-send').textContent = 'Resend SMS OTP';
+            setVerifyStatus('A code was already sent from this screen — ' + sms.attempts_remaining
+                            + ' attempt' + (sms.attempts_remaining === 1 ? '' : 's') + ' left.');
+        }
+        if (sms.resend_available_in > 0) startResendCountdown(sms.resend_available_in);
+    } else if (v.mode === 'PASSCODE') {
+        const pc = v.passcode || {};
+        setModeBadge('badge-grey', 'Guest passcode');
+        intro.textContent = 'Guest driver. Use face or fingerprint first; if they fail, enter the '
+            + 'passcode the driver set at entry.';
+        const input = document.getElementById('passcode-input');
+        input.maxLength = pc.max_length || 8;
+        input.placeholder = (pc.min_length || 4) + '–' + (pc.max_length || 8) + ' digits';
+        document.getElementById('passcode-panel').style.display = '';
+    }
+}
+
+const DELIVERY_TEXT = {
+    queued: 'SMS queued with the provider…',
+    sent: 'SMS sent to the mobile network…',
+    delivered: 'SMS delivered to the driver\'s phone ✓',
+    failed: 'SMS delivery failed — send a new code.',
+    expired: 'The code has expired — send a new code.',
+};
+
+function startDeliveryPolling() {
+    stopDeliveryPolling();
+    let polls = 0;
+    const el = document.getElementById('otp-delivery');
+    const poll = () => {
+        polls += 1;
+        if (!currentTripId || polls > 12) { stopDeliveryPolling(); return; }
+        fetch('/gate/exit/sms/status?trip_id=' + encodeURIComponent(currentTripId))
+            .then(r => r.json()).then(d => {
+                if (!d.delivery_status) { stopDeliveryPolling(); return; }
+                if (DELIVERY_TEXT[d.delivery_status]) el.textContent = DELIVERY_TEXT[d.delivery_status];
+                el.style.color = d.delivery_status === 'failed' ? 'var(--red)' : 'var(--text-mute)';
+                if (['delivered', 'failed', 'expired', 'verified'].includes(d.delivery_status)) {
+                    stopDeliveryPolling();
+                }
+            }).catch(() => {});
+    };
+    poll();
+    deliveryTimer = setInterval(poll, 5000);
+}
+
+function stopDeliveryPolling() {
+    if (deliveryTimer) { clearInterval(deliveryTimer); deliveryTimer = null; }
+}
+
+function startResendCountdown(seconds) {
+    stopResendCountdown();
+    let remaining = Math.max(0, Math.ceil(seconds));
+    const btn = document.getElementById('btn-otp-send');
+    const timer = document.getElementById('otp-timer');
+    const tick = () => {
+        if (remaining <= 0) {
+            stopResendCountdown();
+            return;
+        }
+        btn.disabled = true;
+        timer.textContent = 'You can send another code in ' + remaining + ' s';
+        remaining -= 1;
+    };
+    tick();
+    resendTimer = setInterval(tick, 1000);
+}
+
+function stopResendCountdown() {
+    if (resendTimer) { clearInterval(resendTimer); resendTimer = null; }
+    document.getElementById('btn-otp-send').disabled = false;
+    document.getElementById('otp-timer').textContent = '';
+}
+
+function sendOTP() {
+    if (!currentTripId || !verification || verification.mode !== 'SMS_OTP') return;
+    const btn = document.getElementById('btn-otp-send');
+    btn.disabled = true;
+    setVerifyStatus('Sending the SMS code…');
+
+    fetch(otpSent ? '/gate/exit/sms/resend' : '/gate/exit/sms/send', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({trip_id: currentTripId}),
+    }).then(r => r.json()).then(d => {
+        if (!d.sent) {
+            setVerifyStatus(d.error || 'Could not send the code.', 'var(--red)');
+            log('error', d.error || 'Code not sent');
+            if (d.retry_after) startResendCountdown(d.retry_after);
+            else btn.disabled = false;
+            if (['verification_locked', 'reconciliation_required', 'trip_closed'].includes(d.code)) {
+                lookupTrip();
+            }
+            return;
+        }
+        otpSent = true;
+        document.getElementById('otp-entry').style.display = 'flex';
+        document.getElementById('btn-otp-send').textContent = 'Resend SMS OTP';
+        const input = document.getElementById('otp-input');
+        input.value = '';
+        input.focus();
+        setVerifyStatus('SMS code sent to ' + d.destination_hint + '. Ask the driver to read it '
+                        + 'out — it expires in ' + Math.round(d.expires_in / 60) + ' min.'
+                        + (d.mock_delivery ? ' [DEVELOPMENT: mocked delivery]' : ''), 'var(--green)');
+        log('ok', 'SMS code sent to the registered driver');
+        startResendCountdown(d.resend_available_in);
+        startDeliveryPolling();
     }).catch(() => {
-        statusEl.style.color = 'var(--red)';
-        statusEl.textContent = 'Network error — try again.';
-        document.getElementById('btn-otp-verify').disabled = false;
+        setVerifyStatus('Network error — try again.', 'var(--red)');
+        btn.disabled = false;
     });
 }
 
-function startOTPFaceCapture() {
-    const stream = document.getElementById('otp-face-stream');
-    document.getElementById('otp-face-ph').style.display = 'none';
-    stream.src = '/gate/video-feed';
-    stream.style.display = '';
+function verifyOTP() {
+    const code = document.getElementById('otp-input').value.trim();
+    const length = (verification && verification.sms && verification.sms.code_length) || 6;
+    if (!new RegExp('^\\d{' + length + '}$').test(code)) {
+        setVerifyStatus('Enter the ' + length + '-digit code from the SMS.', 'var(--red)');
+        return;
+    }
+    submitVerification('/gate/exit/sms/verify', {trip_id: currentTripId, code: code},
+                       'btn-otp-verify', 'SMS code verified');
+}
 
-    fetch('/gate/entry/face/start', {
+function verifyPasscode() {
+    const code = document.getElementById('passcode-input').value.trim();
+    if (!/^\d+$/.test(code)) {
+        setVerifyStatus('Enter the passcode digits.', 'var(--red)');
+        return;
+    }
+    submitVerification('/gate/exit/passcode/verify', {trip_id: currentTripId, passcode: code},
+                       'btn-passcode-verify', 'Guest passcode verified');
+}
+
+function submitVerification(url, payload, buttonId, label) {
+    if (!currentTripId) {
+        setVerifyStatus('Look up the vehicle plate first.', 'var(--red)');
+        return;
+    }
+    const btn = document.getElementById(buttonId);
+    btn.disabled = true;
+    setVerifyStatus('Verifying…');
+
+    fetch(url, {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({capture_id: CAPTURE_ID}),
+        body: JSON.stringify(payload),
     }).then(r => r.json()).then(d => {
-        if (d.error) {
-            stream.src = ''; stream.style.display = 'none';
-            document.getElementById('otp-face-ph').style.display = '';
-            document.getElementById('otp-face-status').textContent =
-                'Camera unavailable — granting exit without audit photo.';
-            log('warning', 'Face capture unavailable — OTP exit without audit photo');
-            grantExit('Delegate exit via passcode', null);
+        if (!d.valid) {
+            let text = d.error || 'Verification failed.';
+            if (d.attempts_remaining > 0) {
+                text += ' ' + d.attempts_remaining + ' attempt'
+                    + (d.attempts_remaining === 1 ? '' : 's') + ' left.';
+            }
+            setVerifyStatus(text, 'var(--red)');
+            log('warning', text);
+            btn.disabled = false;
+            if (['verification_locked', 'reconciliation_required', 'wrong_verification_mode',
+                 'trip_closed'].includes(d.code)) {
+                lookupTrip();
+            }
             return;
         }
-
-        const es = new EventSource('/gate/entry/face/stream/' + CAPTURE_ID);
-        es.onmessage = e => {
-            const msg = JSON.parse(e.data);
-            if (msg.face_url) {
-                stream.src = ''; stream.style.display = 'none';
-                const photo = document.getElementById('otp-face-photo');
-                photo.src = msg.face_url; photo.style.display = '';
-                document.getElementById('otp-face-ph').style.display = 'none';
-                // Mirror in the entry record "Exit Capture" slot
-                const exitImg = document.getElementById('exit-face');
-                exitImg.src = msg.face_url; exitImg.style.display = '';
-                document.getElementById('exit-face-ph').style.display = 'none';
-                exitPhotoPath = 'gate_photos/' + msg.face_url.split('/').pop();
-            }
-            if (msg.type === 'success' || msg.type === 'db_match' || msg.type === 'db_notfound') {
-                es.close();
-                document.getElementById('otp-face-status').textContent = 'Audit photo captured ✓';
-                log('ok', 'Exit audit photo saved');
-                grantExit('Delegate exit via passcode', exitPhotoPath);
-            }
-            if (msg.type === 'error') {
-                es.close();
-                stream.src = ''; stream.style.display = 'none';
-                document.getElementById('otp-face-status').textContent =
-                    'No face detected — granting exit without audit photo.';
-                log('warning', 'No face at exit — passcode exit without photo');
-                grantExit('Delegate exit via passcode', null);
-            }
-        };
-        es.onerror = () => { es.close(); grantExit('Delegate exit via passcode', null); };
+        setVerifyStatus(label + ' ✓', 'var(--green)');
+        document.getElementById('num-otp').className = 'step-num done';
+        document.getElementById('num-otp').innerHTML = '✓';
+        document.getElementById('lbl-otp').className = 'step-label done';
+        log('ok', label);
+        grantExit(label);
+    }).catch(() => {
+        setVerifyStatus('Network error — try again.', 'var(--red)');
+        btn.disabled = false;
     });
 }
 
@@ -457,19 +710,25 @@ function log(type, text) {
                      info:'·', waiting:'…', db_match:'✓', db_notfound:'—' };
     const row = document.createElement('div');
     row.style.cssText = `color:${colors[type]||'var(--text-dim)'};display:flex;gap:6px;`;
-    row.innerHTML = `<span style="opacity:.5">${icons[type]||'·'}</span><span>${text}</span>`;
+    // textContent, never innerHTML: messages can include database values.
+    const icon = document.createElement('span');
+    icon.style.opacity = '.5';
+    icon.textContent = icons[type] || '·';
+    const message = document.createElement('span');
+    message.textContent = text;
+    row.append(icon, message);
     body.appendChild(row);
     body.scrollTop = body.scrollHeight;
 }
 
-// ── GRANT EXIT: called only after a server-side exit authorization exists ─────
-// (face/fingerprint matched against THIS trip's own stored biometric, or a
-// passcode verified against THIS trip's own passcode). /gate/exit/confirm
-// re-checks this server-side and will reject if no authorization is on file,
-// so this is UX, not the actual security boundary.
+// ── GRANT EXIT: called only after the server reported a face/fingerprint match
+// that authorized the exit, or a verified SMS code or guest passcode.
+// /gate/exit/confirm re-checks server-side that THIS gate session holds an
+// unexpired authorization for THIS trip and consumes it while closing the
+// trip, so this is UX, not the security boundary.
 
-function grantExit(label, photoPath) {
-    if (exitGranted) return;   // guard against double-fire (face + FP both match)
+function grantExit(label) {
+    if (exitGranted) return;   // guard against a double submit
     exitGranted = true;
 
     document.getElementById('step-hint').textContent = 'Driver verified — logging exit…';
@@ -480,15 +739,14 @@ function grantExit(label, photoPath) {
 
     fetch('/gate/exit/confirm', {
         method: 'POST', headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({
-            trip_id:         currentTripId,
-            exit_photo_path: photoPath,
-        }),
+        // Ids only — the server knows which capture files belong to the trip.
+        body: JSON.stringify({trip_id: currentTripId, capture_id: CAPTURE_ID}),
     }).then(r => r.json()).then(d => {
         if (d.ok) {
             setTimeout(() => { window.location.href = '/gate/trips'; }, 1200);
         } else {
             log('error', d.error || 'Failed to log exit.');
+            setVerifyStatus(d.error || 'Exit was not authorized.', 'var(--red)');
             document.getElementById('granted-banner').style.display = 'none';
             exitGranted = false;
         }
@@ -530,7 +788,7 @@ function setDetectOverlay(text) {
 
 function startAutoDetect() {
     if (document.getElementById('btn-auto').disabled) return;
-    step1Done = false; tripFound = false; exitGranted = false; exitPhotoPath = null;
+    step1Done = false; tripFound = false; exitGranted = false;
     currentTripId = null;
 
     // Reset UI
@@ -540,6 +798,7 @@ function startAutoDetect() {
     document.getElementById('plate-input').value                 = '';
     document.getElementById('lookup-msg').style.display          = 'none';
     document.getElementById('trip-record-card').style.display    = 'none';
+    document.getElementById('attr-cmp-card').style.display       = 'none';
     document.getElementById('granted-banner').style.display      = 'none';
     document.getElementById('log-body').innerHTML                = '';
     document.getElementById('log-card').style.display            = 'none';
@@ -555,14 +814,12 @@ function startAutoDetect() {
     document.getElementById('num-otp').className  = 'step-num';
     document.getElementById('lbl-otp').className  = 'step-label';
     document.getElementById('num-otp').innerHTML  = '<svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>';
-    document.getElementById('otp-input').value    = '';
-    document.getElementById('otp-status').textContent = '';
-    document.getElementById('otp-face-panel').style.display = 'none';
-    document.getElementById('btn-otp-verify').disabled = false;
+    resetVerification();
 
     setStatus('v1', 'Detecting…');
     showVehicleStream();
     setDetectOverlay('Scanning for vehicle…');
+    document.getElementById('image-source-note').style.display = 'none';
     document.getElementById('step-hint').textContent =
         'Camera live — position the vehicle in frame. Auto-capture will trigger when detected.';
 
@@ -633,6 +890,228 @@ function startAutoDetect() {
     });
 }
 
+// ── VEHICLE ATTRIBUTE COMPARISON ──────────────────────────────────────────────
+// Entry values come from the trip record, exit values from the capture that
+// just ran. Rendered with textContent only. A mismatch routes to operator
+// confirmation; it never denies an exit.
+
+const CMP_LABEL = {colour: 'Colour', type: 'Type', brand: 'Brand'};
+
+const CMP_SWATCHES = {
+    white:'#f3f4f6', black:'#1f2937', silver:'#c0c4c9', grey:'#6b7280',
+    red:'#ef4444', blue:'#3b82f6', green:'#22c55e', gold:'#d4af37',
+    brown:'#78503c', orange:'#f97316', yellow:'#eab308', unknown:'#d1d5db',
+};
+
+function cmpTitle(text) {
+    return String(text || '').replace(/[_-]/g, ' ')
+        .replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
+function renderAttributeComparison(entryAttrs, exitAttrs, comparison) {
+    const card = document.getElementById('attr-cmp-card');
+    const body = document.getElementById('cmp-body');
+    const note = document.getElementById('cmp-note');
+    body.textContent = '';
+
+    const hasEntry = entryAttrs && (entryAttrs.colour || entryAttrs.type || entryAttrs.brand);
+    if (!comparison && !hasEntry) { card.style.display = 'none'; return; }
+
+    const rows = (comparison && comparison.comparisons) ? comparison.comparisons
+        : ['colour', 'type', 'brand'].map(a => ({
+            attribute: a, entry: entryAttrs[a], exit: null, match: null,
+            reason: 'No exit reading available',
+        }));
+
+    rows.forEach(row => {
+        const div = document.createElement('div');
+        div.className = 'cmp-row';
+
+        const key = document.createElement('div');
+        key.className = 'cmp-key';
+        key.textContent = CMP_LABEL[row.attribute] || row.attribute;
+        div.appendChild(key);
+
+        [row.entry, row.exit].forEach(value => {
+            const cell = document.createElement('div');
+            cell.className = 'cmp-val';
+            if (row.attribute === 'colour' && value) {
+                const sw = document.createElement('span');
+                sw.className = 'cmp-swatch';
+                sw.style.background = CMP_SWATCHES[value] || CMP_SWATCHES.unknown;
+                cell.appendChild(sw);
+            }
+            const txt = document.createElement('span');
+            txt.className = 'txt';
+            txt.textContent = value ? cmpTitle(value) : '—';
+            if (!value) txt.style.color = 'var(--text-mute)';
+            cell.appendChild(txt);
+            div.appendChild(cell);
+        });
+
+        const result = document.createElement('div');
+        const badge = document.createElement('span');
+        badge.className = 'badge ' + (row.match === true ? 'badge-green'
+                                    : row.match === false ? 'badge-red' : 'badge-grey');
+        badge.style.fontSize = '10px';
+        badge.textContent = row.match === true ? 'Match'
+                          : row.match === false ? 'Differs' : 'n/a';
+        badge.title = row.reason || '';
+        result.appendChild(badge);
+        div.appendChild(result);
+
+        body.appendChild(div);
+    });
+
+    if (comparison && comparison.requires_operator_confirmation) {
+        note.className = 'cmp-note warn';
+        note.textContent = 'Operator confirmation required: ' + comparison.reason
+            + '. This is advisory evidence — it does NOT deny the exit. Complete '
+            + 'face, fingerprint or fallback verification as normal, and treat a '
+            + 'genuine mismatch as a possible cloned plate worth a human check.';
+        log('warning', 'Vehicle attribute mismatch — ' + comparison.reason);
+    } else {
+        note.className = 'cmp-note info';
+        note.textContent = 'Advisory only — attribute differences never deny an '
+            + 'exit. Face, fingerprint or the trip\'s fallback remain the exit '
+            + 'requirement.';
+    }
+    card.style.display = '';
+}
+
+// ── UPLOAD A STILL IMAGE ──────────────────────────────────────────────────────
+// Same pipeline as the camera path. It identifies which trip to look up; it
+// does not authorise the exit, which still needs a verified biometric or the
+// trip passcode.
+
+// Phone photos are often 12-48 MP. Shrinking them here, before sending, cuts
+// the Wi-Fi transfer and the Pi's decode time; the server validates and
+// shrinks whatever arrives anyway. Falls back to the original file whenever
+// the browser cannot decode it (e.g. HEIC), so the server's message shows.
+const UPLOAD_MAX_SIDE = {{ upload_max_side }};
+
+function shrinkImage(file) {
+    const original = {blob: file, name: file.name};
+    if (!window.createImageBitmap) return Promise.resolve(original);
+    return createImageBitmap(file, {imageOrientation: 'from-image'}).then(bitmap => {
+        const scale = Math.min(1, UPLOAD_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+        if (scale === 1 && file.size <= 2 * 1024 * 1024) {
+            bitmap.close();
+            return original;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(bitmap.width * scale);
+        canvas.height = Math.round(bitmap.height * scale);
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close();
+        return new Promise(resolve => canvas.toBlob(
+            blob => resolve(blob ? {blob: blob, name: 'vehicle.jpg'} : original),
+            'image/jpeg', 0.9));
+    }).catch(() => original);
+}
+
+function chooseVehicleImage() {
+    document.getElementById('vehicle-file').click();
+}
+
+function uploadVehicleImage(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    input.value = '';
+
+    stopVehicleStream();
+    setDetectOverlay(null);
+    document.getElementById('btn-auto').disabled   = true;
+    document.getElementById('btn-upload').disabled = true;
+    document.getElementById('anpr-panel').style.display    = 'none';
+    document.getElementById('attr-cmp-card').style.display = 'none';
+    document.getElementById('plate-input').value = '';
+    setStatus('v1', 'Uploading…');
+
+    shrinkImage(file)
+        .then(image => {
+            const form = new FormData();
+            form.append('capture_id', CAPTURE_ID);
+            form.append('image', image.blob, image.name);
+            return fetch('/gate/entry/vehicle/upload', {method: 'POST', body: form});
+        })
+        .then(r => r.json().then(d => ({status: r.status, body: d})))
+        .then(({status, body}) => {
+            if (status !== 200 || body.error) {
+                log('error', body.error || 'Upload failed');
+                setStatus('v1', 'Upload failed');
+                document.getElementById('btn-auto').disabled   = false;
+                document.getElementById('btn-upload').disabled = false;
+                return;
+            }
+            document.getElementById('vehicle-ph').style.display = 'none';
+            const img = document.getElementById('vehicle-photo');
+            img.src = body.url + '?t=' + Date.now();
+            img.style.display = '';
+            document.getElementById('image-source-note').style.display = '';
+            log('ok', 'Image uploaded (' + body.width + '×' + body.height + ') — analysing…');
+            analyseUploadedImage();
+        })
+        .catch(() => {
+            log('error', 'Upload failed');
+            setStatus('v1', 'Upload failed');
+            document.getElementById('btn-auto').disabled   = false;
+            document.getElementById('btn-upload').disabled = false;
+        });
+}
+
+function analyseUploadedImage() {
+    setStatus('v1', 'Analysing…');
+    fetch('/gate/entry/vehicle/start', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({capture_id: CAPTURE_ID}),
+    }).then(r => r.json()).then(d => {
+        if (d.error) {
+            log('error', d.error);
+            setStatus('v1', '');
+            document.getElementById('btn-auto').disabled   = false;
+            document.getElementById('btn-upload').disabled = false;
+            return;
+        }
+        const es = new EventSource('/gate/entry/vehicle/stream/' + CAPTURE_ID);
+        es.onmessage = e => {
+            const msg = JSON.parse(e.data);
+            if (['info','step','ok','warning'].includes(msg.type)) log(msg.type, msg.text);
+            if (msg.status !== undefined) showAnprPanel(msg);
+
+            if (msg.type === 'success') {
+                step1Done = true;
+                markStep(1, 'done');
+                document.getElementById('btn-auto').disabled        = false;
+                document.getElementById('btn-upload').disabled      = false;
+                document.getElementById('btn-retake').style.display = '';
+                setStatus('v1', '');
+                const plate = document.getElementById('plate-input').value.trim();
+                if (plate) {
+                    document.getElementById('step-hint').textContent =
+                        'Plate read from the uploaded image — looking up trip record…';
+                    lookupTrip(plate);
+                } else {
+                    document.getElementById('step-hint').textContent =
+                        'No plate found in that image — enter it manually.';
+                }
+                es.close();
+            }
+            if (msg.type === 'error') {
+                setStatus('v1', 'Analysis failed');
+                document.getElementById('btn-auto').disabled   = false;
+                document.getElementById('btn-upload').disabled = false;
+                es.close();
+            }
+        };
+        es.onerror = () => {
+            document.getElementById('btn-auto').disabled   = false;
+            document.getElementById('btn-upload').disabled = false;
+            es.close();
+        };
+    });
+}
+
 // ── TRIP LOOKUP ───────────────────────────────────────────────────────────────
 
 function lookupTrip(plate) {
@@ -643,7 +1122,8 @@ function lookupTrip(plate) {
     msg.textContent   = 'Looking up trip…';
     msg.style.color   = 'var(--text-mute)';
 
-    fetch('/gate/exit/lookup?plate=' + encodeURIComponent(plate))
+    fetch('/gate/exit/lookup?plate=' + encodeURIComponent(plate)
+          + '&capture_id=' + encodeURIComponent(CAPTURE_ID))
         .then(r => r.json())
         .then(d => {
             if (!d.found) {
@@ -658,6 +1138,8 @@ function lookupTrip(plate) {
 
             // Populate entry record card
             document.getElementById('rec-plate').textContent = d.plate;
+            renderAttributeComparison(d.entry_attributes, d.exit_attributes,
+                                      d.attribute_comparison);
             document.getElementById('rec-time').textContent  =
                 d.entry_time ? d.entry_time.replace('T', ' ').slice(0, 16) : '—';
             if (d.face_photo_url) {
@@ -672,12 +1154,14 @@ function lookupTrip(plate) {
             document.getElementById('trip-record-card').style.display = '';
             log('ok', 'Trip found — ' + d.plate + ' entered ' + (d.entry_time || '').slice(0, 16));
 
-            // Activate face, fingerprint, and OTP steps simultaneously
+            // Face and fingerprint are the primary methods; the fallback
+            // card shows what this trip allows if they fail.
             activateStep(2);
             activateStep(3);
             activateOTP();
             document.getElementById('step-hint').textContent =
-                'Trip found. Scan face, fingerprint, or enter passcode to grant exit.';
+                'Trip found. Verify the driver by face or fingerprint; use the fallback only if they fail.';
+            renderVerification(d.verification);
         });
 }
 
@@ -723,19 +1207,20 @@ function startFaceScan() {
                     const faceImg = document.getElementById('face-photo');
                     faceImg.src = msg.exit_photo_url; faceImg.style.display = '';
                     document.getElementById('face-ph').style.display = 'none';
-                    exitPhotoPath = msg.exit_photo_url;
 
                     const exitImg = document.getElementById('exit-face');
                     exitImg.src = msg.exit_photo_url; exitImg.style.display = '';
                     document.getElementById('exit-face-ph').style.display = 'none';
                 }
 
-                if (msg.decision === 'GRANTED') {
+                // The server authorizes a match before sending this message.
+                if (msg.decision === 'MATCH' && msg.authorized) {
                     markStep(2, 'done');
-                    grantExit('Face verified — trip owner matched', exitPhotoPath);
+                    grantExit('Face verified — trip driver matched');
                 } else {
-                    document.getElementById('step-hint').textContent =
-                        'Face does not match this trip\'s driver — try fingerprint or passcode.';
+                    document.getElementById('step-hint').textContent = msg.decision === 'MATCH'
+                        ? 'Face matched, but the exit could not be authorized — look the trip up again.'
+                        : 'Face does not match the entry capture — try the fingerprint, or use the fallback below.';
                 }
             }
             if (msg.type === 'error') {
@@ -794,16 +1279,22 @@ function startFP() {
                 markStep(3, 'done');
                 document.getElementById('btn-fp-cancel').style.display = 'none';
                 document.getElementById('btn-fp').disabled = false;
-                document.getElementById('fp-status').textContent = 'Done ✓';
+                document.getElementById('fp-status').textContent = 'Match ✓';
                 es.close();
-                grantExit('Fingerprint verified — trip owner matched', exitPhotoPath);
+                // The server authorizes a match before sending this message.
+                if (msg.authorized) {
+                    grantExit('Fingerprint verified — trip driver matched');
+                } else {
+                    document.getElementById('step-hint').textContent =
+                        'Fingerprint matched, but the exit could not be authorized — look the trip up again.';
+                }
             }
             if (msg.type === 'notfound') {
                 document.getElementById('btn-fp-cancel').style.display = 'none';
                 document.getElementById('btn-fp').disabled = false;
                 document.getElementById('fp-status').textContent = 'No match';
                 document.getElementById('step-hint').textContent =
-                    'Fingerprint does not match this trip\'s driver — try face or passcode.';
+                    'Fingerprint does not match the entry scan — try the face, or use the fallback below.';
                 es.close();
             }
             if (msg.type === 'error') {

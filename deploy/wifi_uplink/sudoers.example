@@ -1,0 +1,12 @@
+# /etc/sudoers.d/secure-drive-wifi-uplink  (root:root, mode 0440)
+#
+# Lets the SecureDrive web service run ONE root-owned helper that can only
+# manage the configured USB Wi-Fi adapter. The trailing "" means the command
+# must be run with no arguments; the request travels on stdin.
+# install.sh replaces @SERVICE_USER@ with the account in licensedb.service.
+# Always check with:  sudo visudo -cf /etc/sudoers.d/secure-drive-wifi-uplink
+#
+# Optional, to stop sudo logging every status refresh (sudo 1.9.x):
+#   Defaults!/usr/local/libexec/secure-drive/wifi-uplink-helper !log_allowed
+
+@SERVICE_USER@ ALL=(root) NOPASSWD: /usr/local/libexec/secure-drive/wifi-uplink-helper ""

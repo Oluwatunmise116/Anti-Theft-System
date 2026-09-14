@@ -1,0 +1,121 @@
+{% extends "base.html" %}
+{% block title %}Verification Review — SecureDrive{% endblock %}
+{% block topbar_title %}Verification Review{% endblock %}
+
+{% block content %}
+<style>
+.review-form { display:flex; gap:6px; flex-wrap:wrap; align-items:center; margin-top:6px; }
+.review-form input[type=text], .review-form select { font-size:12px; padding:5px 8px; border:1px solid var(--border);
+    border-radius:6px; background:var(--bg); color:var(--text); min-width:0; }
+.review-form input[type=text] { flex:1 1 180px; }
+.muted { color:var(--text-mute); font-size:11.5px; }
+</style>
+
+<div class="page-header">
+    <div>
+        <div class="page-greeting">Verification <span>Review</span></div>
+        <div class="page-sub">Trips whose fallback an administrator must decide. Face and fingerprint still work for
+            these trips; the decisions here only concern the SMS code or passcode fallback. Every decision needs a
+            note and is recorded in the security log.</div>
+    </div>
+</div>
+
+<!-- TRIPS NEEDING REVIEW -->
+<div class="card" style="margin-bottom:18px;">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Trips Awaiting Reconciliation</div>
+            <div class="card-sub">Vehicles inside whose driver identity was not resolved at entry (including trips logged
+                before identity was recorded), and trips locked after too many failed codes or passcodes.</div>
+        </div>
+    </div>
+    {% if trips %}
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>#</th><th>Plate</th><th>Entry</th><th>Status</th><th>Decision</th></tr></thead>
+        <tbody>
+        {% for t in trips %}
+        <tr>
+            <td class="mono">#{{ t.id }}</td>
+            <td><strong class="mono">{{ t.plate_number }}</strong></td>
+            <td class="mono" style="font-size:12px;">{{ t.entry_time[:16] if t.entry_time else '—' }}</td>
+            <td>
+                {% if t.verification_locked %}<span class="badge badge-red">Locked</span>{% endif %}
+                {% if t.identity_status == 'LEGACY_UNRESOLVED' %}<span class="badge badge-amber">Legacy trip</span>
+                {% elif t.identity_status == 'UNRESOLVED' %}<span class="badge badge-amber">Unresolved at entry</span>
+                {% elif t.verification_mode == 'SMS_OTP' %}<span class="badge badge-green">SMS OTP</span>
+                {% elif t.verification_mode == 'PASSCODE' %}<span class="badge badge-grey">Guest passcode</span>{% endif %}
+                <div class="muted">{% if t.has_passcode %}Passcode stored (hashed){% else %}No passcode stored{% endif %}
+                    {% if t.verification_locked %} · failed: passcode {{ t.passcode_failed_attempts }}, SMS {{ t.otp_failed_attempts }}, codes sent {{ t.otp_send_count }}{% endif %}</div>
+                {% if t.reconciliation_note %}<div class="muted">{{ t.reconciliation_note }}</div>{% endif %}
+            </td>
+            <td>
+                {% if not t.verification_mode %}
+                <form class="review-form" method="POST" action="{{ url_for('admin_trip_reconcile', trip_id=t.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="assign_holder">
+                    <select name="holder_id" required>
+                        <option value="">Registered driver (valid phone number)…</option>
+                        {% for h in sms_ready_holders %}<option value="{{ h.id }}">{{ h.name }} (#{{ h.id }}, {{ h.phone_hint }})</option>{% endfor %}
+                    </select>
+                    <input type="text" name="note" placeholder="Note (how the driver was identified)" required maxlength="500">
+                    <button type="submit" class="btn btn-gold btn-sm">Assign → SMS fallback</button>
+                </form>
+                {% if t.has_passcode %}
+                <form class="review-form" method="POST" action="{{ url_for('admin_trip_reconcile', trip_id=t.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="confirm_guest">
+                    <input type="text" name="note" placeholder="Note (why this driver is a guest)" required maxlength="500">
+                    <button type="submit" class="btn btn-outline btn-sm">Confirm guest → passcode</button>
+                </form>
+                {% endif %}
+                {% endif %}
+                {% if t.verification_locked %}
+                <form class="review-form" method="POST" action="{{ url_for('admin_trip_reconcile', trip_id=t.id) }}">
+                    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                    <input type="hidden" name="action" value="unlock">
+                    <input type="text" name="note" placeholder="Note (what you checked before unlocking)" required maxlength="500">
+                    <button type="submit" class="btn btn-red btn-sm">Unlock &amp; reset limits</button>
+                </form>
+                {% endif %}
+            </td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding:26px;"><p>No trips need reconciliation.</p></div>
+    {% endif %}
+</div>
+
+<!-- SECURITY LOG -->
+<div class="card">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Recent Security Events</div>
+            <div class="card-sub">Sign-ins, biometric results, SMS code and passcode activity. Codes and phone numbers are never recorded here.</div>
+        </div>
+    </div>
+    {% if events %}
+    <div class="table-wrap">
+    <table>
+        <thead><tr><th>Time</th><th>Event</th><th>Trip</th><th>Holder</th><th>Staff</th></tr></thead>
+        <tbody>
+        {% for e in events %}
+        <tr>
+            <td class="mono" style="font-size:11.5px;">{{ e.created_at | epoch_time }}</td>
+            <td>{{ e.event }}</td>
+            <td class="mono">{{ '#%s' % e.trip_id if e.trip_id else '—' }}</td>
+            <td class="mono">{{ '#%s' % e.holder_id if e.holder_id else '—' }}</td>
+            <td>{{ e.username or '—' }}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+    </table>
+    </div>
+    {% else %}
+    <div class="empty-state" style="padding:26px;"><p>No events yet.</p></div>
+    {% endif %}
+</div>
+{% endblock %}

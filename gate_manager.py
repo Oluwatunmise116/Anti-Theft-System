@@ -39,6 +39,9 @@ import fingerprint_manager as fp_mgr
 import config as cfg
 import anpr as _anpr
 from anpr import preprocessing as _anpr_pp
+# Vehicle colour / type / brand. Importing this package loads no model and
+# touches no network — every model is lazy (see attributes/classifiers.py).
+import attributes as va
 
 GATE_PHOTOS_DIR   = "gate_photos"
 DEBUG_PHOTOS_DIR  = os.path.join(GATE_PHOTOS_DIR, "debug")
@@ -161,6 +164,19 @@ def warm_up_ocr():
         threading.Thread(target=warm, daemon=True).start()
 
 
+def warm_up_vehicle_detector():
+    """
+    Pre-load the COCO vehicle model in the background.
+
+    run_vehicle_auto_capture loads it BEFORE its first SSE push, so on a cold
+    process the operator clicks "Auto-Detect Vehicle" and sees nothing at all
+    for the duration of the load — indistinguishable from a dead button.
+    Loading it at start-up, like the OCR backend, removes that silence.
+    """
+    threading.Thread(target=_get_vehicle_yolo, daemon=True,
+                     name="VehicleYoloWarmup").start()
+
+
 # ── YOLO VEHICLE MODEL (for body crop → accurate colour) ──────────────────────
 # Uses YOLOv8n pre-trained on COCO.  Auto-downloaded by ultralytics on first use.
 # Vehicle classes: car=2, motorcycle=3, bus=5, truck=7
@@ -188,29 +204,81 @@ def _get_vehicle_yolo():
     return _vehicle_yolo
 
 
+# COCO class ids -> the coarse class names the attribute fusion uses.
+_VEHICLE_CLASS_NAMES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
+
+
+def vehicle_detection_imgsz() -> int:
+    """
+    Input size for the COCO vehicle detector that Auto-Detect runs on every
+    scan, and for detect_vehicle_crop() callers (config:
+    vehicle_detection_imgsz). Measured on this Pi 5 over 15 public plate
+    images: 114 ms per frame at 320 against 425 ms at Ultralytics' default
+    640, with the same largest-vehicle box (median IoU 0.97). The plate
+    pipeline does not use it — it searches the full frame. Rounded down to
+    a multiple of 32, clamped 192-1280.
+    """
+    try:
+        value = int(cfg.get("vehicle_detection_imgsz", 320))
+    except (TypeError, ValueError):
+        value = 320
+    return max(192, min(1280, (value // 32) * 32))
+
+
+def detect_vehicle_crop_detailed(frame_bgr) -> dict:
+    """
+    Run YOLOv8n once and return everything downstream stages need about the
+    largest vehicle: the crop, its box, the coarse COCO class and the
+    detection confidence.
+
+    This is the single vehicle-detection call per frame. ANPR, colour, type
+    and brand all reuse this one crop — YOLO is never re-run per attribute.
+    Returns {"crop": frame, "bbox": None, ...} when nothing is detected.
+    """
+    empty = {"crop": frame_bgr, "bbox": None, "class_name": None, "confidence": 0.0}
+    model = _get_vehicle_yolo()
+    if model is None or not NUMPY_AVAILABLE or frame_bgr is None:
+        return empty
+    h, w = frame_bgr.shape[:2]
+    try:
+        results = model(frame_bgr, classes=_VEHICLE_CLASSES, conf=0.25,
+                        imgsz=vehicle_detection_imgsz(), verbose=False)[0]
+        if results.boxes is None or len(results.boxes) == 0:
+            return empty
+        boxes = results.boxes
+        xyxy  = boxes.xyxy.cpu().numpy()
+        areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in xyxy]
+        best  = int(np.argmax(areas))
+        x1, y1, x2, y2 = xyxy[best].astype(int)
+        pad = 4
+        x1c = max(0, x1 - pad); y1c = max(0, y1 - pad)
+        x2c = min(w, x2 + pad); y2c = min(h, y2 + pad)
+        try:
+            class_id = int(boxes.cls[best].cpu().numpy())
+            confidence = float(boxes.conf[best].cpu().numpy())
+        except Exception:
+            class_id, confidence = -1, 0.0
+        return {
+            "crop": frame_bgr[y1c:y2c, x1c:x2c],
+            "bbox": (int(x1), int(y1), int(x2), int(y2)),
+            "class_name": _VEHICLE_CLASS_NAMES.get(class_id),
+            "confidence": confidence,
+        }
+    except Exception:
+        return empty
+
+
 def detect_vehicle_crop(frame_bgr):
     """
     Run YOLOv8n to find the largest vehicle in frame.
     Returns (crop_bgr, (x1,y1,x2,y2)) or (frame_bgr, None) if nothing detected.
+
+    Unchanged signature — existing ANPR call sites depend on it. It now
+    delegates to detect_vehicle_crop_detailed so there is one detection
+    implementation.
     """
-    model = _get_vehicle_yolo()
-    if model is None or not NUMPY_AVAILABLE:
-        return frame_bgr, None
-    h, w = frame_bgr.shape[:2]
-    try:
-        results = model(frame_bgr, classes=_VEHICLE_CLASSES, conf=0.25, verbose=False)[0]
-        if results.boxes is None or len(results.boxes) == 0:
-            return frame_bgr, None
-        boxes = results.boxes
-        areas = [(b[2] - b[0]) * (b[3] - b[1]) for b in boxes.xyxy.cpu().numpy()]
-        best  = int(np.argmax(areas))
-        x1, y1, x2, y2 = boxes.xyxy[best].cpu().numpy().astype(int)
-        pad = 4
-        x1c = max(0, x1 - pad); y1c = max(0, y1 - pad)
-        x2c = min(w, x2 + pad); y2c = min(h, y2 + pad)
-        return frame_bgr[y1c:y2c, x1c:x2c], (x1, y1, x2, y2)
-    except Exception:
-        return frame_bgr, None
+    detail = detect_vehicle_crop_detailed(frame_bgr)
+    return detail["crop"], detail["bbox"]
 
 
 # ── ANPR ──────────────────────────────────────────────────────────────────────
@@ -270,93 +338,117 @@ def detect_plate(frame_bgr) -> str:
     return _anpr.detect_plate_string(result)
 
 
-# ── VEHICLE COLOR ─────────────────────────────────────────────────────────────
+# ── VEHICLE COLOUR / TYPE / BRAND ────────────────────────────────────────────
+# Recognition lives in the attributes/ package (localisation, heads, voting).
+# This module only orchestrates capture and reports progress, exactly as it
+# does for ANPR. Attributes are ADVISORY: they never influence allow/deny.
 
-_COLOR_RULES = [
-    ("white",  lambda h, s, v: s < 40 and v > 180),
-    ("black",  lambda h, s, v: v < 60),
-    ("silver", lambda h, s, v: s < 50 and 60 <= v <= 180),
-    ("red",    lambda h, s, v: (h < 15 or h > 165) and s >= 80),
-    ("orange", lambda h, s, v: 15 <= h < 30 and s >= 80),
-    ("yellow", lambda h, s, v: 30 <= h < 45 and s >= 80),
-    ("green",  lambda h, s, v: 45 <= h < 90 and s >= 60),
-    ("blue",   lambda h, s, v: 105 <= h < 135 and s >= 60),
-    ("purple", lambda h, s, v: 135 <= h <= 165 and s >= 60),
-    ("grey",   lambda h, s, v: True),
-]
+COLOR_TOLERANCE = 0.35
 
-_COLOR_BADGES = {
-    "white": "#f3f4f6", "black": "#1f2937", "silver": "#9ca3af",
-    "red": "#ef4444", "orange": "#f97316", "yellow": "#eab308",
-    "green": "#22c55e", "blue": "#3b82f6", "purple": "#a855f7",
-    "grey": "#6b7280", "unknown": "#d1d5db",
-}
+_attr_pipeline = None
+_attr_pipeline_lock = threading.Lock()
 
 
-def detect_color(frame_bgr) -> tuple:
-    """Return (color_name, [h, s, v]) using YOLO vehicle crop + saturation-priority cluster."""
-    if not OPENCV_AVAILABLE or not NUMPY_AVAILABLE:
-        return "unknown", [0, 0, 0]
+def get_attribute_pipeline():
+    """Build the attribute pipeline once and reuse it for the process life."""
+    global _attr_pipeline
+    if _attr_pipeline is not None:
+        return _attr_pipeline
+    with _attr_pipeline_lock:
+        if _attr_pipeline is None:
+            _attr_pipeline = va.build_pipeline(va.settings.load())
+    return _attr_pipeline
 
-    # YOLO vehicle detection → focused crop (skip roof/sky and wheels/road)
-    crop, bbox = detect_vehicle_crop(frame_bgr)
-    ch, cw = crop.shape[:2]
-    roi = crop[int(ch * 0.15):int(ch * 0.80), int(cw * 0.05):int(cw * 0.95)]
-    if roi.size == 0:
-        roi = crop
 
-    hsv    = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV)
-    pixels = hsv.reshape(-1, 3).astype(np.float32)
-    if len(pixels) < 10:
-        return "unknown", [0, 0, 0]
+def reset_attribute_pipeline():
+    """Force a rebuild on next use — call after attr_* settings change."""
+    global _attr_pipeline
+    with _attr_pipeline_lock:
+        _attr_pipeline = None
 
-    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 15, 1.0)
+
+def attribute_model_status() -> dict:
+    """Readiness for the settings/model-status interface. Loads no model."""
     try:
-        _, labels, centers = cv2.kmeans(
-            pixels, 5, None, criteria, 3, cv2.KMEANS_PP_CENTERS
-        )
-        counts = np.bincount(labels.flatten(), minlength=5)
-
-        # Prefer the most-populated chromatically rich cluster (paint colour).
-        # Large dark areas like grilles, tyres, and shadows are achromatic
-        # (low S or low V), so they are skipped in this pass.
-        best_hh = best_ss = best_vv = None
-        best_count = -1
-        for center, count in zip(centers, counts):
-            hh, ss, vv = int(center[0]), int(center[1]), int(center[2])
-            if ss >= 40 and vv >= 40 and count > best_count:
-                best_count           = count
-                best_hh, best_ss, best_vv = hh, ss, vv
-
-        if best_hh is None:
-            # No saturated cluster — entire scene is achromatic (white/black/silver)
-            dom = centers[np.argmax(counts)]
-            best_hh, best_ss, best_vv = int(dom[0]), int(dom[1]), int(dom[2])
-
-        hh, ss, vv = best_hh, best_ss, best_vv
-
-    except Exception:
-        avg = hsv.mean(axis=(0, 1))
-        hh, ss, vv = int(avg[0]), int(avg[1]), int(avg[2])
-
-    for name, test in _COLOR_RULES:
-        if test(hh, ss, vv):
-            return name, [hh, ss, vv]
-    return "grey", [hh, ss, vv]
+        return get_attribute_pipeline().status()
+    except Exception as exc:
+        return {"enabled": False, "error": f"{type(exc).__name__}: {exc}"}
 
 
-def color_distance(hsv1: list, hsv2: list) -> float:
-    """Normalized HSV distance 0–1."""
-    if not hsv1 or not hsv2:
-        return 1.0
-    dh = min(abs(hsv1[0] - hsv2[0]), 180 - abs(hsv1[0] - hsv2[0])) / 90.0
-    ds = abs(hsv1[1] - hsv2[1]) / 255.0
-    dv = abs(hsv1[2] - hsv2[2]) / 255.0
-    return dh * 0.5 + ds * 0.25 + dv * 0.25
+def warm_up_attributes():
+    """
+    Build the backbone in the background at start-up. The first forward pass
+    through a fresh torch module is several times slower than steady state,
+    so paying it here keeps the first vehicle of the day inside the budget.
+    """
+    def _warm():
+        try:
+            get_attribute_pipeline().warm_up()
+        except Exception as exc:
+            print(f"[gate_manager] Attribute warm-up skipped: {exc}")
+
+    threading.Thread(target=_warm, daemon=True, name="AttrWarmup").start()
 
 
-def color_hex(name: str) -> str:
-    return _COLOR_BADGES.get(name, "#d1d5db")
+def analyse_vehicle_attributes(frames: list, plate_box=None, vehicle_boxes=None,
+                               progress=None):
+    """
+    Run colour/type/brand over the frames the plate stage already used.
+
+    `vehicle_boxes` are COCO boxes this module already computed during
+    capture — passing them in avoids a second YOLO pass, measured at ~297 ms
+    per 1280x720 frame on the Pi.
+
+    Never raises: a missing model, an unlocalisable vehicle or a corrupt
+    frame all come back as a structured result, so entry always remains
+    completable by hand.
+    """
+    try:
+        return get_attribute_pipeline().process_frames(
+            frames, plate_box=plate_box,
+            vehicle_boxes_for_frame=(lambda i: vehicle_boxes) if vehicle_boxes else None,
+            progress=progress)
+    except Exception as exc:
+        print(f"[gate_manager] Attribute pipeline error: {type(exc).__name__}: {exc}")
+        return va.VehicleAttributeResult.failed(
+            len(frames or []), f"attribute pipeline error: {type(exc).__name__}")
+
+
+def _run_vehicle_attributes(cid: str, push, frames: list, plate_result=None) -> dict:
+    """
+    Shared tail of both vehicle-capture flows, run AFTER the plate result
+    has already been pushed — the barrier never waits on a brand classifier.
+    """
+    settings = va.settings.load()
+    if not settings.get("attr_enabled", True):
+        return {}
+
+    plate_box = getattr(plate_result, "bounding_box", None) if plate_result else None
+    push("step", "Reading vehicle attributes…")
+    result = analyse_vehicle_attributes(
+        frames, plate_box=plate_box, progress=lambda text: push("info", text))
+    temp_set(cid, "vehicle_attributes", result.to_dict())
+
+    api = result.to_api_dict()
+    if result.status == "VEHICLE_NOT_LOCALISED":
+        push("warning",
+             "Could not tell which vehicle carries this plate — attributes skipped",
+             vehicle_attributes=api)
+        return api
+
+    parts = [f"{name.capitalize()}: {value.value} ({value.confidence * 100:.0f}%)"
+             for name, value in result.values().items() if value.is_usable]
+    if parts:
+        confirmed = all(not v.needs_operator_review
+                        for v in result.values().values() if v.is_usable)
+        push("ok" if confirmed else "warning",
+             "Vehicle attributes — " + ", ".join(parts)
+             + ("" if confirmed else " — advisory, verify before accepting"),
+             vehicle_attributes=api)
+    else:
+        push("info", "Vehicle attributes unavailable — enter them manually if needed",
+             vehicle_attributes=api)
+    return api
 
 
 # ── TEMP CAPTURE STORE ────────────────────────────────────────────────────────
@@ -364,11 +456,30 @@ _temp: dict = {}
 _temp_lock  = threading.Lock()
 
 
-def new_capture_id() -> str:
-    cid = uuid.uuid4().hex[:10]
+def new_capture_id(owner=None) -> str:
+    """A capture id, optionally bound to the gate session that created it."""
+    cid = uuid.uuid4().hex[:16]
     with _temp_lock:
-        _temp[cid] = {}
+        _temp[cid] = {"owner_session": owner} if owner is not None else {}
     return cid
+
+
+def claim_capture(cid: str, owner) -> bool:
+    """
+    Bind a capture to the gate session using it. Returns False when another
+    session already owns it, so one operator's capture — including the
+    identity recorded from its face/fingerprint search — can never be used
+    to log another operator's entry.
+    """
+    if not cid:
+        return False
+    with _temp_lock:
+        entry = _temp.setdefault(cid, {})
+        current = entry.get("owner_session")
+        if current is None:
+            entry["owner_session"] = owner
+            return True
+        return current == owner
 
 
 def temp_get(cid: str) -> dict:
@@ -428,7 +539,101 @@ def snap_vehicle_frame(cid: str) -> dict:
     path = os.path.join(GATE_PHOTOS_DIR, f"vehicle_{cid}.jpg")
     cv2.imwrite(path, bgr)
     temp_set(cid, "vehicle_photo", path)
-    return {"ok": True, "url": f"/gate/photo/vehicle_{cid}.jpg"}
+    temp_set(cid, "vehicle_image_source", "camera")
+    return {"ok": True, "url": f"/gate/photo/vehicle_{cid}.jpg",
+            "image_source": "camera"}
+
+
+# ── UPLOADED VEHICLE IMAGE ───────────────────────────────────────────────────
+# An operator can analyse a still image instead of the live camera. The
+# analysis path is identical (run_vehicle_capture), but the PROVENANCE is
+# not: a camera capture is evidence the vehicle was physically at the gate,
+# an uploaded file is not. That difference is recorded on the trip as
+# vehicle_image_source and shown in the UI, so nobody reads an uploaded
+# photo as proof of presence.
+
+#: Accepted upload container formats. Checked by DECODING the bytes, not by
+#: trusting the filename or the declared content type.
+UPLOAD_MIN_DIMENSION = 64
+
+
+def save_uploaded_vehicle_image(cid: str, data: bytes, original_name: str = "") -> dict:
+    """
+    Validate an uploaded image and store it as this capture's vehicle photo.
+
+    The file is decoded from memory and RE-ENCODED to JPEG rather than being
+    written through. That normalises the format, strips EXIF (which can
+    carry location and device metadata the gate has no reason to keep), and
+    means a file that merely looks like an image cannot be stored under a
+    .jpg name.
+
+    Returns {"ok": True, "url": ...} or {"error": "..."} — never raises.
+    """
+    if not OPENCV_AVAILABLE or not NUMPY_AVAILABLE:
+        return {"error": "OpenCV not installed"}
+
+    c = cfg.load()
+    if not c.get("gate_upload_enabled", True):
+        return {"error": "Image upload is disabled in configuration"}
+
+    max_bytes = int(c.get("gate_upload_max_mb", 12)) * 1024 * 1024
+    if not data:
+        return {"error": "No image data received"}
+    if len(data) > max_bytes:
+        return {"error": f"Image is larger than the "
+                         f"{c.get('gate_upload_max_mb', 12)} MB limit"}
+
+    try:
+        buffer = np.frombuffer(data, dtype=np.uint8)
+        bgr = cv2.imdecode(buffer, cv2.IMREAD_COLOR)
+    except Exception:
+        bgr = None
+    if bgr is None or bgr.size == 0:
+        return {"error": "That file is not a readable image "
+                         "(JPEG or PNG expected)"}
+
+    height, width = bgr.shape[:2]
+    if height < UPLOAD_MIN_DIMENSION or width < UPLOAD_MIN_DIMENSION:
+        return {"error": f"Image is too small to analyse "
+                         f"({width}x{height}; minimum "
+                         f"{UPLOAD_MIN_DIMENSION}x{UPLOAD_MIN_DIMENSION})"}
+
+    max_pixels = int(c.get("gate_upload_max_pixels", 40_000_000))
+    if height * width > max_pixels:
+        return {"error": f"Image resolution is too large ({width}x{height})"}
+
+    # Shrink large photos before they are saved: every later step (save,
+    # re-read, plate and vehicle detection) is faster on a smaller image,
+    # and the detectors work at far below phone-camera resolution anyway.
+    # The shorter side never drops below the minimum analysable size.
+    max_side = int(c.get("gate_upload_max_side", 1920) or 0)
+    if max_side > 0 and max(height, width) > max_side:
+        scale = max(max_side / float(max(height, width)),
+                    UPLOAD_MIN_DIMENSION / float(min(height, width)))
+        if scale < 1.0:
+            bgr = cv2.resize(bgr, (max(1, round(width * scale)), max(1, round(height * scale))),
+                             interpolation=cv2.INTER_AREA)
+            height, width = bgr.shape[:2]
+
+    # The filename is constructed here, never taken from the upload, so a
+    # crafted name cannot escape the gate photos directory.
+    path = os.path.join(GATE_PHOTOS_DIR, f"vehicle_{cid}.jpg")
+    if not cv2.imwrite(path, bgr, [cv2.IMWRITE_JPEG_QUALITY, 92]):
+        return {"error": "Could not save the uploaded image"}
+
+    temp_set(cid, "vehicle_photo", path)
+    temp_set(cid, "vehicle_image_source", "upload")
+    # A previous camera capture's results must not survive a new upload.
+    temp_set(cid, "plate_result", None)
+    temp_set(cid, "plate_result_object", None)
+    temp_set(cid, "vehicle_attributes", None)
+    return {
+        "ok": True,
+        "url": f"/gate/photo/vehicle_{cid}.jpg",
+        "width": int(width),
+        "height": int(height),
+        "image_source": "upload",
+    }
 
 
 def _capture_plate_frame_burst(count: int, interval: float = 0.05) -> list:
@@ -463,6 +668,9 @@ def _run_plate_recognition(cid: str, push, frames: list) -> dict:
 
     temp_set(cid, "plate_number", result.plate_number or "")
     temp_set(cid, "plate_result", result.to_dict())
+    # The full object, so the attribute stage can reuse the plate BOX for
+    # the containment linkage without re-running plate detection.
+    temp_set(cid, "plate_result_object", result)
     temp_set(cid, "plate_source", "auto" if result.plate_number else "")
     temp_set(cid, "plate_confidence", result.overall_confidence)
 
@@ -504,6 +712,7 @@ def run_vehicle_auto_capture(cid: str, on_complete):
         push("warning", "YOLO not available — capturing frame directly")
 
     push("step", "Scanning for vehicle…")
+    imgsz = vehicle_detection_imgsz()
 
     CONSEC_NEEDED = 3       # consecutive detections before auto-capture
     CONF_THRESH   = 0.45    # vehicle detection confidence threshold
@@ -529,7 +738,8 @@ def run_vehicle_auto_capture(cid: str, on_complete):
         if vehicle_model is not None:
             try:
                 results = vehicle_model(
-                    bgr, classes=_VEHICLE_CLASSES, conf=CONF_THRESH, verbose=False
+                    bgr, classes=_VEHICLE_CLASSES, conf=CONF_THRESH, imgsz=imgsz,
+                    verbose=False
                 )[0]
                 boxes = results.boxes
                 if boxes is not None and len(boxes) > 0:
@@ -576,12 +786,18 @@ def run_vehicle_auto_capture(cid: str, on_complete):
     path = os.path.join(GATE_PHOTOS_DIR, f"vehicle_{cid}.jpg")
     cv2.imwrite(path, photo_frame)
     temp_set(cid, "vehicle_photo", path)
+    temp_set(cid, "vehicle_image_source", "camera")
     push("ok", "Vehicle captured ✓")
 
     api = _run_plate_recognition(cid, push, frames)
+    # Attribute recognition runs after ANPR and can never block it: a
+    # failure here still leaves the plate result and manual entry intact.
+    attributes = _run_vehicle_attributes(cid, push, frames,
+                                         temp_get(cid).get("plate_result_object"))
 
     push("success", "Analysis complete ✓",
          vehicle_url=f"/gate/photo/vehicle_{cid}.jpg",
+         vehicle_attributes=attributes,
          **api)
     on_complete(temp_get(cid))
     end_vehicle_session(cid)
@@ -614,9 +830,12 @@ def run_vehicle_capture(cid: str, on_complete):
     # pipeline will correctly report LOW_CONFIDENCE rather than CONFIRMED,
     # since a single frame can never meet the multi-frame consensus bar.
     api = _run_plate_recognition(cid, push, [bgr])
+    attributes = _run_vehicle_attributes(cid, push, [bgr],
+                                         temp_get(cid).get("plate_result_object"))
 
     push("success", "Analysis complete ✓",
          vehicle_url=f"/gate/photo/vehicle_{cid}.jpg",
+         vehicle_attributes=attributes,
          **api)
     on_complete(temp_get(cid))
     end_vehicle_session(cid)
@@ -659,6 +878,10 @@ def run_face_capture(cid: str, on_complete, holders_with_photos=None):
         fm.stop_camera()
         on_complete(result)
         end_face_session(cid)
+
+    # A new capture replaces any earlier identity result for this capture;
+    # a failed one leaves none (-> identity unresolved, never "guest").
+    temp_set(cid, "identity_face", None)
 
     if not OPENCV_AVAILABLE:
         push("error", "OpenCV not available")
@@ -712,9 +935,11 @@ def run_face_capture(cid: str, on_complete, holders_with_photos=None):
     temp_set(cid, "face_encoding", emb.tolist())
 
     # ── DB face lookup: compare live embedding against all registered passport photos ──
-    if holders_with_photos:
+    # The outcome is recorded server-side as this capture's face identity
+    # result; /gate/entry/confirm reads it from here, never from the browser.
+    if holders_with_photos is not None:
         push("step", f"Searching database ({len(holders_with_photos)} record(s))…")
-        best_holder, best_dist = None, 1.0
+        best_holder, best_dist, compared = None, 1.0, 0
         for holder in holders_with_photos:
             photo_path = holder.get("photo_path", "")
             if not photo_path or not os.path.exists(photo_path):
@@ -725,10 +950,24 @@ def run_face_capture(cid: str, on_complete, holders_with_photos=None):
             ref_emb, _ = fm.get_face_embedding(ref_bgr)
             if ref_emb is None:
                 continue
+            compared += 1
             dist = fm.face_distance(ref_emb, emb)
             if dist < best_dist:
                 best_dist = dist
                 best_holder = holder
+
+        if best_holder and best_dist <= fm.FACE_CV_THRESHOLD:
+            temp_set(cid, "identity_face", {
+                "result": "match", "holder_id": best_holder.get("holder_id"),
+                "holder_uid": best_holder.get("holder_uid"),
+                "distance": round(float(best_dist), 4)})
+        elif holders_with_photos and compared == 0:
+            # Registered photos exist but none could be compared: a failed
+            # search, not evidence that the driver is unregistered.
+            temp_set(cid, "identity_face", {"result": "error",
+                                            "reason": "no registered photo could be compared"})
+        else:
+            temp_set(cid, "identity_face", {"result": "no_match", "compared": compared})
 
         if best_holder and best_dist <= fm.FACE_CV_THRESHOLD:
             confidence = round((1.0 - best_dist) * 100, 1)
@@ -745,6 +984,9 @@ def run_face_capture(cid: str, on_complete, holders_with_photos=None):
                  expiry_date=best_holder.get("expiry_date"),
                  photo_url=(f"/photos/{os.path.basename(pp)}" if pp else None),
                  match_method="face")
+        elif holders_with_photos and compared == 0:
+            push("warning", "Could not compare against any registered photo — "
+                            "identity unresolved")
         else:
             conf_pct = round((1.0 - best_dist) * 100, 1) if best_dist < 1.0 else 0
             push("db_notfound",
@@ -784,30 +1026,31 @@ def _push_exit(trip_id: int, t: str, txt: str, **kw):
 
 
 # ── EXIT AUTHORIZATION ────────────────────────────────────────────────────────
-# Server-side, per-trip proof that a verified exit method (biometric matched
-# against THIS trip's own stored encoding/template, or a passcode verified
-# against THIS trip's own passcode) has succeeded. /gate/exit/confirm consumes
-# this instead of trusting a client-supplied decision — a generic "this person
-# exists somewhere in the holders database" match must never be sufficient.
-_exit_authorizations: dict = {}
-_exit_auth_lock = threading.Lock()
+# Exit authorizations are not kept in memory here. The face/fingerprint
+# comparisons below hand their result to `on_result`, which the app wires to
+# gate_verification.record_biometric_result(): it stores the comparison and,
+# for a match against THIS trip's own entry capture, writes the exit
+# authorization to the database for the gate session that started the scan.
+# on_result runs before the final SSE message, so the page never asks to
+# close the trip before the authorization exists.
 
 
-def authorize_exit(trip_id: int, method: str, **extra):
-    with _exit_auth_lock:
-        _exit_authorizations[trip_id] = {"method": method, **extra}
+def _report(on_result, result) -> bool:
+    """Call on_result(result); True only when it authorized the exit."""
+    if on_result is None:
+        return False
+    try:
+        return bool(on_result(result))
+    except Exception as exc:
+        print(f"[gate_manager] Could not record the exit result: {type(exc).__name__}")
+        return False
 
 
-def consume_exit_authorization(trip_id: int):
-    """Return and clear the authorization for trip_id, or None if not authorized."""
-    with _exit_auth_lock:
-        return _exit_authorizations.pop(trip_id, None)
-
-
-def run_exit_verify(trip_id: int, stored_encoding: list, on_complete):
+def run_exit_verify(trip_id: int, stored_encoding: list, on_complete, on_result=None):
     """
-    Capture live frame → SFace face compare → on_complete(result).
-    Camera is started here and stopped when done.
+    Capture live frame → SFace compare against THIS trip's entry capture →
+    on_result(result) (records it; a match authorizes the exit) → final SSE
+    message → on_complete(result). Camera is started here and stopped when done.
     """
     def push(t, txt, **kw):
         _push_exit(trip_id, t, txt, **kw)
@@ -841,8 +1084,10 @@ def run_exit_verify(trip_id: int, stored_encoding: list, on_complete):
     push("step", "Detecting driver face with YuNet…")
     live_emb, _ = fm.get_face_embedding(bgr)
     if live_emb is None:
+        result = {"error": "no_face", "exit_photo": exit_photo, "decision": "NO_FACE"}
+        _report(on_result, result)
         push("error", "No face detected — ask driver to look at camera")
-        finish({"error": "no_face", "exit_photo": exit_photo, "decision": "DENIED"})
+        finish(result)
         return
 
     dist = fm.face_distance(stored_encoding, live_emb)
@@ -854,7 +1099,7 @@ def run_exit_verify(trip_id: int, stored_encoding: list, on_complete):
          f"confidence {confidence}% (distance {round(dist, 3)})",
          distance=round(dist, 3), confidence=confidence)
 
-    decision = "GRANTED" if face_match else "DENIED"
+    decision = "MATCH" if face_match else "MISMATCH"
     exit_photo_url = "/gate/photo/" + os.path.basename(exit_photo)
     result = {
         "face_match": face_match,
@@ -865,15 +1110,18 @@ def run_exit_verify(trip_id: int, stored_encoding: list, on_complete):
         "decision": decision,
     }
 
-    if face_match:
-        # Proof this specific trip's owner was matched — not just any holder.
-        authorize_exit(trip_id, "face", exit_photo=exit_photo,
-                        face_distance=round(dist, 3))
-
-    push("success" if face_match else "denied",
-         f"EXIT {decision}", decision=decision,
-         exit_photo_url=exit_photo_url, confidence=confidence,
-         face_distance=round(dist, 3))
+    authorized = _report(on_result, result)
+    if face_match and authorized:
+        text = "Face matches this trip's entry capture — exit authorized ✓"
+    elif face_match:
+        text = ("Face matches, but the exit could not be authorized "
+                "(the trip may already be closed).")
+    else:
+        text = ("Face does not match this trip's entry capture — try the fingerprint "
+                "or the fallback.")
+    push("success" if face_match else "denied", text,
+         decision=decision, authorized=authorized, exit_photo_url=exit_photo_url,
+         confidence=confidence, face_distance=round(dist, 3))
     finish(result)
 
 
@@ -895,6 +1143,9 @@ def cancel_fp_entry(capture_id: str):
 
 def run_fp_entry(capture_id: str, on_complete, all_templates=None):
     key = _ENTRY_FP_KEY + capture_id
+    # Recorded only when the whole capture succeeds (see below).
+    temp_set(capture_id, "identity_fp", None)
+    identity = None
 
     def push(t, txt, **kw):
         q = fp_mgr.get_session_queue(key)
@@ -945,9 +1196,9 @@ def run_fp_entry(capture_id: str, on_complete, all_templates=None):
         # ── DB lookup FIRST while live template is still in CharBuffer1 ──────
         # get_fpdata() communicates with the sensor and can disturb CharBuffer1,
         # so we do all comparisons before downloading the template to Python.
-        if all_templates:
+        if all_templates is not None:
             push("step", f"Searching database ({len(all_templates)} record(s))…")
-            best_entry, best_score = None, 0
+            best_entry, best_score, compared = None, 0, 0
             for entry in all_templates:
                 try:
                     if fp_mgr._uart:
@@ -961,6 +1212,7 @@ def run_fp_entry(capture_id: str, on_complete, all_templates=None):
                     raw = sensor.confidence
                     score = raw[0] if isinstance(raw, tuple) else (raw if raw is not None else 0)
                     score = int(score)
+                    compared += 1
                     push("info", f"Checked {entry.get('name','?')}: score {score}")
                     if score > best_score:
                         best_score = score
@@ -968,6 +1220,15 @@ def run_fp_entry(capture_id: str, on_complete, all_templates=None):
                 except Exception as ex:
                     push("warning", f"Skipped {entry.get('name','?')}: {ex}")
                     continue
+
+            if best_entry and best_score >= fp_mgr.CONFIDENCE_THRESHOLD:
+                identity = {"result": "match", "holder_id": best_entry.get("holder_id"),
+                            "holder_uid": best_entry.get("holder_uid"), "score": best_score}
+            elif all_templates and compared == 0:
+                identity = {"result": "error",
+                            "reason": "no enrolled fingerprint could be compared"}
+            else:
+                identity = {"result": "no_match", "compared": compared}
 
             if best_entry and best_score >= fp_mgr.CONFIDENCE_THRESHOLD:
                 push("db_match",
@@ -995,6 +1256,7 @@ def run_fp_entry(capture_id: str, on_complete, all_templates=None):
 
         template = list(data)
         temp_set(capture_id, "fingerprint_template", template)
+        temp_set(capture_id, "identity_fp", identity)
 
         push("success", f"Fingerprint captured ({len(template)} bytes) ✓")
         on_complete(template)
@@ -1022,12 +1284,18 @@ def cancel_fp_exit(trip_id: int):
     fp_mgr.end_session(_EXIT_FP_KEY + str(trip_id))
 
 
-def run_fp_exit(trip_id: int, stored_template: list, on_complete):
-    """Verify fingerprint at exit against stored entry template."""
+def run_fp_exit(trip_id: int, stored_template: list, on_complete, on_result=None):
+    """
+    Verify the fingerprint at exit against THIS trip's stored entry
+    template. on_result(result) records it — a match authorizes the exit —
+    before the final SSE message.
+    """
     key = _EXIT_FP_KEY + str(trip_id)
 
-    def push(t, txt):
-        fp_mgr._push(key, t, txt)
+    def push(t, txt, **kw):
+        q = fp_mgr.get_session_queue(key)
+        if q:
+            q.put({"type": t, "text": txt, **kw})
 
     sensor, err = fp_mgr._get_sensor()
     if not sensor:
@@ -1066,14 +1334,19 @@ def run_fp_exit(trip_id: int, stored_template: list, on_complete):
         on_complete(None); fp_mgr.end_session(key); return
 
     match = score >= FP_THRESHOLD
-    if match:
-        push("success", f"Fingerprint MATCH — score {score} ✓")
-        # Proof this specific trip's owner was matched — not just any holder.
-        authorize_exit(trip_id, "fingerprint", score=score)
+    result = {"match": match, "score": score}
+    authorized = _report(on_result, result)
+    if match and authorized:
+        push("success", f"Fingerprint MATCH — score {score} ✓ exit authorized",
+             authorized=True)
+    elif match:
+        push("success", f"Fingerprint MATCH — score {score}, but the exit could not be "
+                        f"authorized (the trip may already be closed).", authorized=False)
     else:
-        push("notfound", f"Fingerprint MISMATCH — score {score} (need ≥ {FP_THRESHOLD})")
+        push("notfound", f"Fingerprint MISMATCH — score {score} (need ≥ {FP_THRESHOLD})",
+             authorized=False)
 
-    on_complete({"match": match, "score": score})
+    on_complete(result)
     fp_mgr.end_session(key)
 
 

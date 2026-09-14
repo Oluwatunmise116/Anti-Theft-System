@@ -464,24 +464,50 @@ def stop_camera():
         _cam_state["frame"] = None
 
 
+def _preview_settings():
+    """(max_width, frame_interval_s) for the live preview, from config.json."""
+    import config as cfg
+    settings = cfg.load()
+    try:
+        max_width = max(160, int(settings.get("preview_max_width", 640)))
+        fps = max(1, min(30, int(settings.get("preview_max_fps", 15))))
+    except (TypeError, ValueError):
+        max_width, fps = 640, 15
+    return max_width, 1.0 / fps
+
+
 def generate_video_frames():
-    """Yield MJPEG frames from the running camera worker. Does NOT own the camera."""
+    """
+    Yield MJPEG frames from the running camera worker. Does NOT own the camera.
+
+    The preview is only for the operator's eyes, so it is downscaled and
+    rate-limited (preview_max_width / preview_max_fps). Encoding every full
+    1280x720 frame at ~30 fps competed with plate and face detection for the
+    Pi's CPU. Captures still read the full-resolution frames.
+    """
     if not OPENCV_AVAILABLE:
         return
+    max_width, interval = _preview_settings()
     while _cam_running.is_set():
+        started = time.monotonic()
         with _cam_lock:
             frame = _cam_state["frame"]
         if frame is None:
             time.sleep(0.05)
             continue
+        height, width = frame.shape[:2]
+        if width > max_width:
+            frame = cv2.resize(frame, (max_width, max(1, round(height * max_width / width))),
+                               interpolation=cv2.INTER_AREA)
         ok, jpeg = cv2.imencode(".jpg", frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
         if not ok:
+            time.sleep(interval)
             continue
         yield (b"--frame\r\n"
                b"Content-Type: image/jpeg\r\n\r\n"
                + jpeg.tobytes()
                + b"\r\n")
-        time.sleep(0.033)
+        time.sleep(max(0.0, interval - (time.monotonic() - started)))
 
 
 # ── SESSION HELPERS ───────────────────────────────────────────────────────────

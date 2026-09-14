@@ -21,6 +21,8 @@ pillow==11.1.0
 requests==2.32.3
 python-dotenv==1.0.1
 PyYAML==6.0.2
+# SMS OTP fallback: normalises saved phone numbers to E.164 before sending.
+phonenumbers==9.0.39
 
 # ── ANPR: detector + OCR ──────────────────────────────────────────────────
 ultralytics==8.4.62
@@ -32,6 +34,25 @@ easyocr==1.7.2
 # per-character confidence. EasyOCR is kept as the fallback backend.
 fast-plate-ocr==1.1.0
 onnxruntime>=1.20
+
+# ── Vehicle attributes: colour / type / brand ────────────────────────────
+# Model acquisition is an explicit offline step
+# (scripts/prepare_vehicle_models.py) — the running Flask app never
+# downloads weights. huggingface_hub is needed only by that script and by
+# the readiness check; transformers/timm build the model architectures at
+# load time. If these are absent the gate still runs: every attribute is
+# reported MODEL_UNAVAILABLE and can be entered manually.
+huggingface_hub>=1.0
+safetensors>=0.4
+timm>=1.0
+transformers>=4.40
+
+# ── Optional: ONNX export of the attribute models ────────────────────────
+# Only scripts/export_vehicle_attribute_onnx.py needs this; onnxruntime
+# (already required above for fast-plate-ocr) is what runs the result.
+# Measured on this project's Pi 5, ONNX was SLOWER than PyTorch for these
+# three models — benchmark before switching. See README_VEHICLE_ATTRIBUTES.md.
+onnx>=1.16
 
 # ── Dataset acquisition (scripts/download_nigerian_plate_dataset.py) ─────
 # Training-only — never required by the running Flask app.

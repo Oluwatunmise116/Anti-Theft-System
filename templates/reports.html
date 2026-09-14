@@ -102,4 +102,60 @@
     </div>
     {% endif %}
 </div>
+<!-- Vehicle attribute recognition coverage -->
+<div class="card" style="margin-top:18px;">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Vehicle Attribute Coverage</div>
+            <div class="card-sub">
+                Across the last {{ attr_report.total_trips }} trip{{ 's' if attr_report.total_trips != 1 }}.
+                These are recognition rates, not accuracy: measuring accuracy needs
+                ground-truth labels (scripts/evaluate_vehicle_attributes.py).
+            </div>
+        </div>
+    </div>
+
+    {% if attr_report.total_trips %}
+    <div class="table-wrap">
+        <table>
+            <thead>
+                <tr>
+                    <th>Attribute</th>
+                    <th>Auto-recognised</th>
+                    <th>Coverage</th>
+                    <th>Operator-set</th>
+                    <th>Compared at Exit</th>
+                    <th>Differed</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for key, name in [('colour','Colour'), ('type','Type'), ('brand','Brand')] %}
+                <tr>
+                    <td><strong style="font-size:12.5px;">{{ name }}</strong></td>
+                    <td class="mono" style="font-size:12px;">{{ attr_report.recognised[key] }}</td>
+                    <td class="mono" style="font-size:12px;">{{ attr_report.recognised_pct[key] }}%</td>
+                    <td class="mono" style="font-size:12px;">{{ attr_report.operator_set[key] }}</td>
+                    <td class="mono" style="font-size:12px;">{{ attr_report.compared[key] }}</td>
+                    <td class="mono" style="font-size:12px;">
+                        {% if attr_report.differed[key] %}
+                        <span style="color:var(--amber)">{{ attr_report.differed[key] }}</span>
+                        {% else %}0{% endif %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    <div style="margin-top:10px;font-size:11.5px;color:var(--text-mute);">
+        Vehicle could not be linked to the plate on
+        {{ attr_report.vehicle_not_localised }} trip(s) — reported explicitly rather
+        than guessed. An exit difference routes to operator review only; it never
+        denies an exit on its own.
+    </div>
+    {% else %}
+    <div class="empty-state">
+        <p>No trips logged yet — attribute coverage appears once vehicles are recorded.</p>
+    </div>
+    {% endif %}
+</div>
 {% endblock %}

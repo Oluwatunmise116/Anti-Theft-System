@@ -16,6 +16,7 @@
     <div class="flex gap-2">
         <a href="{{ url_for('edit_holder', holder_id=record.id) }}" class="btn btn-outline">✎ Edit</a>
         <form method="POST" action="{{ url_for('delete_holder', holder_id=record.id) }}" onsubmit="return confirm('Delete this holder permanently?')">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-red">✕ Delete</button>
         </form>
         <a href="{{ url_for('holders') }}" class="btn btn-outline">← Back</a>
@@ -68,6 +69,27 @@
                 <div class="detail-field"><label>Next of Kin Phone</label><div class="value">{{ record.next_of_kin_phone or '—' }}</div></div>
             </div>
         </div>
+    </div>
+</div>
+
+<!-- SMS EXIT CODES — fallback status (the full number is not shown here) -->
+<div class="card mt-4">
+    <div class="card-header" style="margin-bottom:12px;">
+        <div>
+            <div class="card-title">SMS Exit Codes (fallback)</div>
+            <div class="card-sub">At the exit this driver is verified by face or fingerprint. If both fail, a one-time code is sent by SMS to the saved number.</div>
+        </div>
+        {% if sms.phone_valid %}<span class="badge badge-green"><span class="dot"></span>SMS fallback available</span>
+        {% else %}<span class="badge badge-red"><span class="dot"></span>No valid number</span>{% endif %}
+    </div>
+    <div class="detail-fields">
+        <div class="detail-field"><label>Codes go to</label>
+            <div class="value">{% if sms.phone_valid %}{{ sms.phone_hint }}{% else %}<span class="text-red">Not a valid number</span>{% endif %}</div></div>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--text-mute);">
+        {% if not sms.phone_valid %}Correct the phone number on this record to enable the SMS fallback. {% endif %}
+        Only an administrator can change this number. Changing it cancels any code already sent.
+        An SMS code shows that someone can read messages for this number; it does not prove who is holding the phone.
     </div>
 </div>
 

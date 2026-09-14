@@ -1,0 +1,15 @@
+{
+  "_comment": "Copy to /etc/secure-drive/wifi-uplink.json (owner root:root, mode 0644) and replace every placeholder. The values for your Pi are printed by: /usr/bin/python3 deploy/wifi_uplink/wifi_uplink_helper.py --suggest-config. The helper refuses to run while any placeholder remains.",
+  "usb_adapter": {
+    "vendor_id": "REPLACE_WITH_USB_VENDOR_ID",
+    "product_id": "REPLACE_WITH_USB_PRODUCT_ID",
+    "permanent_mac": "REPLACE_WITH_USB_ADAPTER_PERMANENT_MAC",
+    "id_path": null
+  },
+  "protected_connection_uuids": [
+    "REPLACE_WITH_HOTSPOT_CONNECTION_UUID"
+  ],
+  "reserved_subnets": [],
+  "profile_prefix": "SecureDrive Uplink",
+  "route_metric": 700
+}

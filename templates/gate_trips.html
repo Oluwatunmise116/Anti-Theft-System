@@ -3,15 +3,90 @@
 {% block topbar_title %}Trip Log{% endblock %}
 
 {% block content %}
+<style>
+.attr-chip { display:inline-flex; align-items:center; gap:5px; font-size:11px;
+             color:var(--text-dim); white-space:nowrap; }
+.attr-chip .sw { width:10px; height:10px; border-radius:3px; flex-shrink:0;
+                 border:1px solid var(--border-strong); }
+.attr-stack { display:flex; flex-direction:column; gap:2px; min-width:0; }
+.attr-muted { color:var(--text-mute); font-size:11px; }
+.attr-lowconf { opacity:.75; }
+.attr-fix { margin-top:5px; display:none; gap:4px; flex-wrap:wrap; }
+.attr-fix select, .attr-fix input { font-size:11px; padding:3px 5px; max-width:110px; }
+</style>
+
+{#
+  One vehicle-attribute cell. Every value is escaped by Jinja's autoescaping;
+  the colour swatch uses the server-side colour_hex table keyed by the stored
+  label, never raw model output. Low-confidence values are dimmed and carry
+  the confidence in their tooltip so an operator can tell a confirmed
+  reading from a guess at a glance.
+#}
+{% macro attribute_cell(t) %}
+    {% if t.vehicle_color or t.vehicle_type or t.vehicle_brand %}
+    <div class="attr-stack{% if t.vehicle_attributes_status == 'LOW_CONFIDENCE' %} attr-lowconf{% endif %}">
+        {% if t.vehicle_color %}
+        <span class="attr-chip" title="Colour · {{ t.vehicle_color_source or 'auto' }}{% if t.vehicle_color_confidence %} · {{ t.vehicle_color_confidence | confidence_pct }}{% if t.vehicle_color_votes %} · {{ t.vehicle_color_votes }} frame(s){% endif %}{% endif %}">
+            <span class="sw" style="background:{{ t.vehicle_color | colour_swatch }}"></span>
+            {{ t.vehicle_color | attr_label }}
+            {% if t.vehicle_color_source and t.vehicle_color_source != 'auto' %}
+            <span class="badge {{ (t.vehicle_color_source | source_badge)[0] }}"
+                  style="font-size:9px;padding:1px 5px;">{{ (t.vehicle_color_source | source_badge)[1] }}</span>
+            {% endif %}
+        </span>
+        {% endif %}
+        {% if t.vehicle_type or t.vehicle_brand %}
+        <span class="attr-chip" title="{% if t.vehicle_type_confidence %}Type {{ t.vehicle_type_confidence | confidence_pct }}{% endif %}{% if t.vehicle_brand_confidence %} · Brand {{ t.vehicle_brand_confidence | confidence_pct }}{% endif %}">
+            {{ (t.vehicle_type | attr_label) if t.vehicle_type else '' }}{% if t.vehicle_type and t.vehicle_brand %} · {% endif %}{{ (t.vehicle_brand | attr_label) if t.vehicle_brand else '' }}
+        </span>
+        {% endif %}
+    </div>
+    {% else %}
+    <span class="attr-muted">—</span>
+    {% endif %}
+{% endmacro %}
+
+{% macro verification_badge(t) %}
+    {% if t.verification_locked %}
+        <span class="badge badge-red" title="Too many failed attempts — administrator review">Locked</span>
+    {% elif t.verification_mode == 'SMS_OTP' %}
+        <span class="badge badge-green" title="Registered driver — face/fingerprint, SMS code as fallback">SMS OTP</span>
+    {% elif t.verification_mode == 'PASSCODE' %}
+        <span class="badge badge-grey" title="Guest driver — face/fingerprint, passcode set at entry as fallback">Guest passcode</span>
+    {% elif t.identity_status == 'LEGACY_UNRESOLVED' %}
+        <span class="badge badge-amber" title="Logged before driver identity was recorded — face/fingerprint, or administrator reconciliation">Legacy · review</span>
+    {% else %}
+        <span class="badge badge-amber" title="Identity not resolved at entry — administrator must reconcile">Unresolved · review</span>
+    {% endif %}
+{% endmacro %}
+
+{% macro match_cell(t) %}
+    {% set flags = [('C', t.color_match), ('T', t.type_match), ('B', t.brand_match)] %}
+    {% if flags | selectattr(1, 'ne', None) | list %}
+    <span style="display:inline-flex;gap:4px;" title="{{ t.attribute_mismatch_reason or 'Entry vs exit attribute comparison' }}">
+        {% for name, value in flags %}
+            {% if value is not none %}
+            <span class="badge {{ 'badge-green' if value == 1 else 'badge-red' }}"
+                  style="font-size:9.5px;padding:2px 6px;">{{ name }}</span>
+            {% endif %}
+        {% endfor %}
+    </span>
+    {% else %}
+    <span class="attr-muted">—</span>
+    {% endif %}
+{% endmacro %}
+
 <div class="page-header">
     <div>
         <div class="page-greeting">Trip <span>Log</span></div>
         <div class="page-sub">{{ active|length }} vehicle{{ 's' if active|length != 1 }} currently inside.</div>
     </div>
     <div class="page-actions">
+        {% if current_staff and current_staff.is_admin %}
         {% if history %}
         <form method="POST" action="{{ url_for('gate_trips_clear_history') }}"
               onsubmit="return confirm('Clear completed trips (EXITED / DENIED)? Active vehicles are kept. This cannot be undone.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-outline">
                 <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"
                      viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
@@ -21,12 +96,14 @@
         {% endif %}
         <form method="POST" action="{{ url_for('gate_trips_clear_all') }}"
               onsubmit="return confirm('Delete ALL trip records including vehicles currently inside? This cannot be undone.');">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <button type="submit" class="btn btn-red">
                 <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"
                      viewBox="0 0 24 24"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
                 Clear All
             </button>
         </form>
+        {% endif %}
         <a href="{{ url_for('gate_entry') }}" class="btn btn-gold">
             <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"
                  viewBox="0 0 24 24"><path d="M15 3h6v6"/><path d="M10 14L21 3"/><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/></svg>
@@ -50,7 +127,9 @@
                 <tr>
                     <th>#</th>
                     <th>Plate</th>
+                    <th>Vehicle</th>
                     <th>Entry Time</th>
+                    <th>Exit Verification</th>
                     <th>Face</th>
                     <th>FP</th>
                     <th></th>
@@ -67,14 +146,22 @@
                                  style="width:40px;height:30px;object-fit:cover;border-radius:5px;
                                         border:1px solid var(--border);">
                             <strong class="mono" style="letter-spacing:1px;">{{ t.plate_number }}</strong>
+                            {% if t.vehicle_image_source == 'upload' %}
+                            <span class="badge badge-amber" style="font-size:9px;padding:1px 5px;"
+                                  title="The vehicle photo was uploaded, not taken at the gate">
+                                uploaded
+                            </span>
+                            {% endif %}
                         </div>
                         {% else %}
                         <strong class="mono" style="letter-spacing:1px;">{{ t.plate_number }}</strong>
                         {% endif %}
                     </td>
+                    <td>{{ attribute_cell(t) }}</td>
                     <td style="font-size:12px;color:var(--text-dim);" class="mono">
                         {{ t.entry_time[:16] if t.entry_time else '—' }}
                     </td>
+                    <td>{{ verification_badge(t) }}</td>
                     <td>
                         {% if t.face_encoding %}
                             <span class="badge badge-green"><span class="dot"></span>Yes</span>
@@ -90,11 +177,13 @@
                         {% endif %}
                     </td>
                     <td style="display:flex;gap:6px;align-items:center;">
-                        <a href="{{ url_for('gate_exit') }}?plate={{ t.plate_number }}"
+                        <a href="{{ url_for('gate_exit') }}?plate={{ t.plate_number|urlencode }}"
                            class="btn btn-outline btn-sm">Exit →</a>
+                        {% if current_staff and current_staff.is_admin %}
                         <form method="POST" action="{{ url_for('gate_trip_delete', trip_id=t.id) }}"
                               onsubmit="return confirm('Delete entry record for {{ t.plate_number }}? This cannot be undone.');"
                               style="margin:0;">
+                            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                             <button type="submit" class="btn btn-red btn-sm"
                                     title="Delete this entry record">
                                 <svg width="11" height="11" fill="none" stroke="currentColor" stroke-width="2"
@@ -102,6 +191,7 @@
                                     <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
                             </button>
                         </form>
+                        {% endif %}
                     </td>
                 </tr>
                 {% endfor %}
@@ -126,9 +216,11 @@
                 <tr>
                     <th>#</th>
                     <th>Plate</th>
+                    <th>Vehicle</th>
                     <th>Entry</th>
                     <th>Exit</th>
                     <th>Status</th>
+                    <th>Attr Match</th>
                     <th>Face Dist</th>
                 </tr>
             </thead>
@@ -152,6 +244,7 @@
                             </strong>
                         </div>
                     </td>
+                    <td>{{ attribute_cell(t) }}</td>
                     <td class="mono" style="font-size:11.5px;color:var(--text-dim);">
                         {{ t.entry_time[:16] if t.entry_time else '—' }}
                     </td>
@@ -167,12 +260,18 @@
                             <span class="badge badge-green"><span class="dot"></span>
                                 {{ t.exit_result or 'Exited' }}
                             </span>
+                            {% if t.exit_verification_method %}
+                            <div style="font-size:10.5px;color:var(--text-mute);margin-top:2px;">
+                                via {{ t.exit_verification_method | exit_method_label }}
+                            </div>
+                            {% endif %}
                         {% elif t.status == 'DENIED' %}
                             <span class="badge badge-red"><span class="dot"></span>Denied</span>
                         {% else %}
                             <span class="badge badge-grey"><span class="dot"></span>{{ t.status }}</span>
                         {% endif %}
                     </td>
+                    <td>{{ match_cell(t) }}</td>
                     <td class="mono" style="font-size:12px;">
                         {% if t.face_distance is not none %}
                             <span style="color:{% if t.face_distance <= 0.5 %}var(--green){% else %}var(--red){% endif %}">

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sign in — SecureDrive</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+    :root { --bg:#f0f2f5; --surface:#fff; --border:rgba(0,0,0,0.1); --text:#111827;
+            --text-dim:#6b7280; --red:#ef4444; --red-wash:rgba(239,68,68,0.08);
+            --green:#10b981; --green-wash:rgba(16,185,129,0.09); }
+    * { box-sizing:border-box; margin:0; padding:0; }
+    body { font-family:'DM Sans', system-ui, sans-serif; background:var(--bg); color:var(--text);
+           min-height:100vh; display:flex; align-items:center; justify-content:center; padding:24px 16px; }
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:16px;
+            padding:30px 28px; width:100%; max-width:380px; box-shadow:0 4px 18px rgba(0,0,0,0.08); }
+    h1 { font-size:20px; margin-bottom:4px; }
+    .sub { color:var(--text-dim); font-size:13px; margin-bottom:22px; }
+    label { display:block; font-size:12px; color:var(--text-dim); font-weight:500; margin:14px 0 5px; }
+    input { width:100%; padding:10px 12px; border:1px solid var(--border); border-radius:8px;
+            font:inherit; font-size:14px; background:var(--bg); }
+    input:focus { outline:2px solid rgba(17,24,39,0.15); background:var(--surface); }
+    button { margin-top:22px; width:100%; padding:11px; border:0; border-radius:8px; background:var(--text);
+             color:#fff; font:inherit; font-weight:600; cursor:pointer; }
+    .alert { padding:10px 12px; border-radius:8px; font-size:13px; margin-bottom:12px; }
+    .alert-error { background:var(--red-wash); color:var(--red); }
+    .alert-success { background:var(--green-wash); color:var(--green); }
+    .note { margin-top:18px; font-size:12px; color:var(--text-dim); line-height:1.5; }
+    code { background:var(--bg); padding:1px 5px; border-radius:4px; }
+    </style>
+</head>
+<body>
+<main class="card">
+    <h1>SecureDrive</h1>
+    <div class="sub">Staff sign-in — Vehicle Anti-Theft System</div>
+
+    {% with messages = get_flashed_messages(with_categories=true) %}
+        {% for category, message in messages %}
+            <div class="alert alert-{{ category }}">{{ message }}</div>
+        {% endfor %}
+    {% endwith %}
+
+    <form method="POST" action="{{ url_for('auth.login', next=request.args.get('next')) }}">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <label for="username">Username</label>
+        <input id="username" name="username" autocomplete="username" required autofocus>
+        <label for="password">Password</label>
+        <input id="password" name="password" type="password" autocomplete="current-password" required>
+        <button type="submit">Sign in</button>
+    </form>
+
+    {% if no_users %}
+    <p class="note">No staff accounts exist yet. On the gate computer, run
+        <code>python scripts/manage_staff.py create &lt;username&gt; --role admin</code>
+        from the project folder.</p>
+    {% endif %}
+</main>
+</body>
+</html>

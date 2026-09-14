@@ -4,6 +4,44 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Anti-Theft System{% endblock %}</title>
+    <meta name="csrf-token" content="{{ csrf_token() }}">
+    <script>
+    // CSRF: every same-origin state-changing fetch() carries the token and
+    // every POST form gets it as a hidden field. The server rejects
+    // state-changing requests without it (see auth.py).
+    (function () {
+      var token = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+      var nativeFetch = window.fetch.bind(window);
+      function sameOrigin(url) {
+        try { return new URL(url, window.location.href).origin === window.location.origin; }
+        catch (e) { return false; }
+      }
+      window.fetch = function (input, init) {
+        init = init || {};
+        var method = (init.method || (input && input.method) || 'GET').toUpperCase();
+        var url = typeof input === 'string' ? input : (input && input.url) || String(input || '');
+        if (method !== 'GET' && method !== 'HEAD' && sameOrigin(url)) {
+          var headers = new Headers(init.headers || (typeof input !== 'string' && input.headers) || {});
+          headers.set('X-CSRF-Token', token);
+          init.headers = headers;
+        }
+        return nativeFetch(input, init).then(function (response) {
+          if (response.status === 401 && sameOrigin(url)) {
+            window.location.href = '/login?next=' + encodeURIComponent(window.location.pathname);
+          }
+          return response;
+        });
+      };
+      document.addEventListener('submit', function (event) {
+        var form = event.target;
+        if (!form || (form.method || '').toLowerCase() !== 'post') return;
+        if (form.querySelector('input[name="csrf_token"]')) return;
+        var field = document.createElement('input');
+        field.type = 'hidden'; field.name = 'csrf_token'; field.value = token;
+        form.appendChild(field);
+      }, true);
+    })();
+    </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;0,9..40,600;0,9..40,700;1,9..40,400&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
     <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
@@ -489,6 +527,13 @@
             <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="1" y="8" width="22" height="10" rx="2"/><path d="M5 8V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/><circle cx="7" cy="18" r="1.5"/><circle cx="17" cy="18" r="1.5"/></svg>
             Trip Log
         </a>
+        {% if current_staff and current_staff.is_admin %}
+        <a href="{{ url_for('admin_verification') }}" class="nav-item {% if request.endpoint == 'admin_verification' %}active{% endif %}">
+            <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/><polyline points="9 12 11 14 15 10"/></svg>
+            Verification Review
+            {% if review_count %}<span class="badge-count">{{ review_count }}</span>{% endif %}
+        </a>
+        {% endif %}
 
         <div class="nav-label" style="margin-top:14px">Database</div>
         <a href="{{ url_for('add_holder') }}" class="nav-item {% if request.endpoint == 'add_holder' %}active{% endif %}">
@@ -514,6 +559,15 @@
             <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/></svg>
             Settings
         </a>
+        {% if current_staff %}
+        <div class="footer-status" style="justify-content:space-between;">
+            <span title="Signed in">{{ current_staff.username }} · {{ current_staff.role }}</span>
+            <form method="POST" action="{{ url_for('auth.logout') }}" style="margin:0">
+                <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+                <button type="submit" class="btn btn-ghost btn-sm" style="padding:3px 8px;">Sign out</button>
+            </form>
+        </div>
+        {% endif %}
         <div class="footer-status">
             <div class="pulse-dot"></div>
             license.db · Raspberry Pi

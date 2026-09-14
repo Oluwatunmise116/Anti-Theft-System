@@ -1,0 +1,15 @@
+{
+  "checkpoint": "untrained_attr.pt",
+  "device_label": "pi",
+  "input_size": 224,
+  "torch_threads": 1,
+  "num_benchmark_crops": 2,
+  "latency_budget_ms": 150.0,
+  "results": [
+    {
+      "format": "ncnn",
+      "export_error": "NCNN export of the attribute classifier is not implemented here. Ultralytics' NCNN exporter covers YOLO models only; a plain classifier needs pnnx (pip install pnnx) run against the ONNX graph produced above. The ONNX and ONNX-INT8 paths are exported and benchmarked."
+    }
+  ],
+  "note": "Latency, load time and memory measured on this device. Label agreement compares each export against the PyTorch baseline and is NOT an accuracy claim about either."
+}

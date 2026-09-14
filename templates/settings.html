@@ -10,6 +10,590 @@
     </div>
 </div>
 
+{% if show_wifi %}
+<style>
+#wifi-card [hidden]{display:none !important;}
+.wifi-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:14px;margin-bottom:14px;}
+.wifi-box{padding:12px 14px;border-radius:10px;border:1px solid var(--border);background:var(--bg-2);
+          margin-bottom:12px;font-size:12.5px;line-height:1.45;}
+.wifi-box-ok{background:var(--green-wash);} .wifi-box-err{background:var(--red-wash);}
+.wifi-box-warn{background:var(--amber-wash);}
+.wifi-row-head{display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px;}
+.wifi-steps{display:flex;flex-wrap:wrap;gap:6px;}
+.wifi-list{display:flex;flex-direction:column;gap:8px;}
+.wifi-net{border:1px solid var(--border);border-radius:10px;background:var(--bg);}
+.wifi-net-head{display:flex;align-items:center;gap:12px;padding:10px 12px;width:100%;background:none;
+               border:0;text-align:left;font:inherit;color:inherit;}
+button.wifi-net-head{cursor:pointer;}
+.wifi-net-name{font-weight:600;font-size:13px;word-break:break-all;white-space:pre-wrap;}
+.wifi-net-sub{font-size:11.5px;color:var(--text-mute);}
+.wifi-bars{display:inline-flex;align-items:flex-end;gap:2px;height:14px;flex-shrink:0;}
+.wifi-bars i{display:block;width:3px;background:var(--border);border-radius:1px;}
+.wifi-bars i.on{background:var(--text-dim);}
+.wifi-form{display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;padding:0 12px 12px;}
+.wifi-empty{font-size:12px;color:var(--text-mute);padding:8px 2px;}
+</style>
+
+<!-- Internet Wi-Fi: the USB adapter's internet uplink (administrators only) -->
+<div class="card" id="wifi-card" style="margin-bottom:18px;">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Internet Wi-Fi</div>
+            <div class="card-sub">
+                Connect the USB Wi-Fi adapter to a router or phone hotspot so SMS codes
+                (Robase) can be sent. The Secure_Drive hotspot on the built-in adapter is
+                never changed from here.
+            </div>
+        </div>
+        <span class="badge badge-grey" id="wifi-badge"><span class="dot"></span>Checking…</span>
+    </div>
+
+    <div id="wifi-problem" class="wifi-box wifi-box-warn" hidden></div>
+
+    <div class="wifi-grid">
+        <div class="detail-field"><label>USB adapter</label><div class="value" id="wifi-adapter">—</div></div>
+        <div class="detail-field"><label>Wi-Fi network</label><div class="value" id="wifi-ssid">—</div></div>
+        <div class="detail-field"><label>IP address</label><div class="value mono" id="wifi-ip">—</div></div>
+        <div class="detail-field"><label>Secure_Drive hotspot</label><div class="value" id="wifi-hotspot">—</div></div>
+    </div>
+
+    <div class="wifi-box">
+        <div class="wifi-row-head">
+            <strong style="font-size:13px;">Connection checks</strong>
+            <span style="display:flex;gap:8px;align-items:center;">
+                <span id="wifi-checked" style="font-size:11px;color:var(--text-mute);"></span>
+                <button type="button" class="btn btn-outline btn-sm" id="wifi-check-btn">Check again</button>
+            </span>
+        </div>
+        <div id="wifi-steps" class="wifi-steps"></div>
+        <div id="wifi-step-detail" style="font-size:11.5px;color:var(--text-dim);margin-top:8px;"></div>
+        <div id="wifi-system" style="font-size:11.5px;color:var(--text-dim);margin-top:4px;"></div>
+        <div style="font-size:11px;color:var(--text-mute);margin-top:6px;">
+            Each check is one secure (TLS) request; Robase is checked with its free health
+            endpoint, so no SMS is sent and no credit is used. At the gate, Robase's answer to a
+            real code request is what counts.
+        </div>
+    </div>
+
+    <div id="wifi-msg" class="wifi-box" role="status" aria-live="polite" hidden></div>
+
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 12px;">
+        <button type="button" class="btn btn-gold btn-sm" id="wifi-scan-btn">Scan for networks</button>
+        <button type="button" class="btn btn-outline btn-sm" id="wifi-disconnect-btn" hidden>Disconnect</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="wifi-refresh-btn">Refresh</button>
+    </div>
+
+    <div id="wifi-networks" class="wifi-list">
+        <div class="wifi-empty">Press “Scan for networks” to see what the USB adapter can reach.</div>
+    </div>
+
+    <details id="wifi-hidden" style="margin-top:12px;">
+        <summary style="cursor:pointer;font-size:12.5px;font-weight:600;">Connect to a hidden network</summary>
+        <div class="wifi-form" style="padding:10px 0 0;">
+            <div class="form-group" style="margin:0;flex:1 1 180px;">
+                <label for="wifi-hidden-ssid">Network name (SSID)</label>
+                <input id="wifi-hidden-ssid" type="text" maxlength="32" autocomplete="off" spellcheck="false">
+            </div>
+            <div class="form-group" style="margin:0;flex:0 1 190px;">
+                <label for="wifi-hidden-sec">Security</label>
+                <select id="wifi-hidden-sec">
+                    <option value="wpa-psk">WPA/WPA2 Personal</option>
+                    <option value="sae">WPA3 Personal</option>
+                    <option value="open">Open (no password)</option>
+                </select>
+            </div>
+            <div class="form-group" style="margin:0;flex:1 1 180px;" id="wifi-hidden-pass-wrap">
+                <label for="wifi-hidden-pass">Password</label>
+                <input id="wifi-hidden-pass" type="password" maxlength="128" autocomplete="off">
+            </div>
+            <button type="button" class="btn btn-gold btn-sm wifi-action" id="wifi-hidden-btn">Connect</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-mute);margin-top:6px;">
+            WEP, Enhanced Open (OWE) and WPA Enterprise (802.1X) networks are not supported.
+        </div>
+    </details>
+
+    <div class="card-title" style="margin:18px 0 8px;font-size:13px;">Saved networks</div>
+    <div id="wifi-saved" class="wifi-list"><div class="wifi-empty">Loading…</div></div>
+    <div id="wifi-note" style="font-size:11px;color:var(--text-mute);margin-top:8px;"></div>
+</div>
+
+<script>
+(function () {
+    const card = document.getElementById('wifi-card');
+    if (!card) return;
+    const CSRF = document.querySelector('meta[name="csrf-token"]').getAttribute('content');
+    const $ = (id) => document.getElementById(id);
+    const SECURITY = {'wpa-psk': 'WPA/WPA2 Personal', 'sae': 'WPA3 Personal', 'open': 'Open', 'none': 'Open'};
+    const PROBE_WORDS = {reachable: 'reachable', unreachable: 'unreachable', dns_error: 'name lookup failed',
+        tls_error: 'secure check failed', unexpected: 'unexpected answer', degraded: 'reports a problem',
+        not_tested: 'not checked', timeout: 'check timed out'};
+    let status = null, reach = null, networks = [], hiddenCount = 0, openPanel = null, polling = null, busy = false;
+
+    // Every Wi-Fi endpoint requires the CSRF token, reads included.
+    async function api(method, url, body) {
+        const init = {method, headers: {'X-CSRF-Token': CSRF, 'Accept': 'application/json'}};
+        if (body !== undefined) {
+            init.headers['Content-Type'] = 'application/json';
+            init.body = JSON.stringify(body);
+        }
+        let response;
+        try { response = await fetch(url, init); }
+        catch (e) {
+            return {ok: false, status: 0, data: {error: 'The Pi did not answer. Check that this device ' +
+                'is still on the Secure_Drive hotspot, then press Refresh.'}};
+        }
+        let data = {};
+        try { data = await response.json(); } catch (e) { data = {}; }
+        return {ok: response.ok, status: response.status, data};
+    }
+
+    // DOM builder: all network names go in as text, never as HTML.
+    function h(tag, props, children) {
+        const node = document.createElement(tag);
+        Object.entries(props || {}).forEach(([key, value]) => {
+            if (key === 'text') node.textContent = value;
+            else if (key === 'class') node.className = value;
+            else if (key === 'style') node.style.cssText = value;
+            else if (key.startsWith('on')) node.addEventListener(key.slice(2), value);
+            else if (value === true) node.setAttribute(key, '');
+            else if (value !== false && value != null) node.setAttribute(key, value);
+        });
+        (children || []).forEach((child) => {
+            if (child != null) node.appendChild(typeof child === 'string' ? document.createTextNode(child) : child);
+        });
+        return node;
+    }
+    function badge(kind, text) { return h('span', {class: 'badge badge-' + kind}, [h('span', {class: 'dot'}), text]); }
+    function setBadge(kind, text) { const b = badge(kind, text); b.id = 'wifi-badge'; $('wifi-badge').replaceWith(b); }
+    function message(kind, text) {
+        const box = $('wifi-msg');
+        box.className = 'wifi-box' + ({ok: ' wifi-box-ok', err: ' wifi-box-err', warn: ' wifi-box-warn'}[kind] || '');
+        box.textContent = text || '';
+        box.hidden = !text;
+    }
+    function bars(signal) {
+        const lit = signal >= 75 ? 4 : signal >= 50 ? 3 : signal >= 25 ? 2 : 1;
+        return h('span', {class: 'wifi-bars', title: signal + '% signal'},
+            [6, 9, 12, 14].map((height, i) => h('i', {class: i < lit ? 'on' : '', style: 'height:' + height + 'px'})));
+    }
+    function setBusy(on) {
+        busy = on;
+        ['wifi-scan-btn', 'wifi-disconnect-btn', 'wifi-refresh-btn'].forEach((id) => { $(id).disabled = on; });
+        card.querySelectorAll('.wifi-action').forEach((b) => { b.disabled = on; });
+    }
+    function connected() {
+        const c = status && status.connection;
+        return c && c.state === 'connected' && !c.protected ? c : null;
+    }
+    function savedFor(ssidHex) {
+        return ((status && status.saved) || []).find((s) => s.ssid_hex === ssidHex) || null;
+    }
+
+    // ── status ──────────────────────────────────────────────────────────────
+    function renderStatus(s) {
+        status = s;
+        const adapter = s.adapter || {};
+        const conn = s.connection;
+        const problems = [];
+        if (!s.available) {
+            setBadge('red', 'Unavailable');
+            problems.push((s.error && s.error.message) || 'Wi-Fi control is unavailable.');
+        } else if (!adapter.present) {
+            setBadge('amber', 'Adapter not found');
+            problems.push(adapter.problem_message || 'The USB Wi-Fi adapter was not found.');
+        } else if (connected()) {
+            setBadge('green', 'Connected');
+        } else if (conn && conn.state === 'connecting') {
+            setBadge('amber', 'Connecting');
+        } else {
+            setBadge('grey', 'Not connected');
+        }
+        if (adapter.present && adapter.problem) problems.push(adapter.problem_message || adapter.problem);
+        if (conn && conn.subnet_conflict) {
+            problems.push('The USB network uses addresses that overlap the hotspot (' + conn.subnet_conflict +
+                '). Hotspot devices could lose access to this app — disconnect it and use another network.');
+        }
+        (s.hotspot || []).forEach((spot) => {
+            if (spot.on_usb_adapter) problems.push('The Secure_Drive hotspot is running on the USB adapter, so ' +
+                'the adapter will not be changed from here. See README_WIFI_UPLINK.md.');
+        });
+        $('wifi-problem').textContent = problems.join(' ');
+        $('wifi-problem').hidden = !problems.length;
+
+        const adapterBox = $('wifi-adapter');
+        adapterBox.replaceChildren();
+        if (adapter.present) {
+            adapterBox.append(h('div', {text: adapter.interface + ' · ' + (adapter.driver || 'USB')}),
+                h('div', {class: 'mono', style: 'font-size:11px;color:var(--text-mute);',
+                          text: adapter.mac + ' · ' + adapter.state}));
+        } else {
+            adapterBox.textContent = s.available ? 'Not found' : '—';
+        }
+
+        const ssidBox = $('wifi-ssid');
+        ssidBox.replaceChildren();
+        if (conn) {
+            ssidBox.append(h('div', {class: 'wifi-net-name', text: conn.ssid || '(no name)'}));
+            const sub = [];
+            if (conn.signal != null) sub.push(conn.signal + '% signal');
+            if (conn.state === 'connecting') sub.push('connecting…');
+            if (!conn.managed_here && !conn.protected) sub.push('profile "' + conn.name + '" was not added here');
+            if (sub.length) ssidBox.append(h('div', {style: 'font-size:11px;color:var(--text-mute);', text: sub.join(' · ')}));
+        } else {
+            ssidBox.textContent = adapter.present ? 'Not connected' : '—';
+        }
+
+        const ips = (conn && conn.ipv4) || [];
+        $('wifi-ip').textContent = ips.length ? ips.map((a) => a.address + '/' + a.prefix).join(', ') +
+            (conn.gateway ? '  via ' + conn.gateway : '') : '—';
+
+        const spotBox = $('wifi-hotspot');
+        spotBox.replaceChildren();
+        (s.hotspot || []).forEach((spot) => {
+            spotBox.append(h('div', {}, [spot.active
+                ? badge(spot.on_usb_adapter ? 'red' : 'green', (spot.ssid || spot.name) + ' on ' + spot.interface)
+                : badge('amber', (spot.ssid || spot.name) + ' not running')]));
+        });
+        if (!(s.hotspot || []).length) spotBox.textContent = '—';
+
+        $('wifi-disconnect-btn').hidden = !(conn && !conn.protected);
+        $('wifi-scan-btn').disabled = busy || !s.available || !adapter.present || !!adapter.problem;
+        $('wifi-note').textContent = s.unmanaged_wifi_profiles
+            ? s.unmanaged_wifi_profiles + ' other saved Wi-Fi profile(s) on this Pi were not added here and could ' +
+              'also join automatically on the USB adapter. See README_WIFI_UPLINK.md.'
+            : '';
+        renderSaved();
+        if (networks.length) renderNetworks();
+        if (s.job && s.job.state === 'running' && !polling) pollJob(s.job.id);
+    }
+
+    function probeKind(p) {
+        if (!p || p.state === 'not_tested') return 'grey';
+        return p.state === 'reachable' ? 'green' : p.state === 'degraded' ? 'amber' : 'red';
+    }
+    function renderSteps() {
+        const s = status || {};
+        const adapter = s.adapter || {};
+        const conn = connected();
+        const ip = conn && (conn.ipv4 || [])[0];
+        const usb = reach && reach.usb && ip && reach.usb.ipv4 === ip.address ? reach.usb : null;
+        const steps = [
+            ['Adapter present', adapter.present ? 'green' : 'red', ''],
+            ['Joined Wi-Fi', conn ? 'green' : 'red', ''],
+            ['IP address', ip ? 'green' : 'red', ''],
+            ['Internet via USB', probeKind(usb && usb.internet), usb ? usb.internet.detail : 'Not checked yet'],
+            ['Robase via USB', probeKind(usb && usb.robase), usb ? usb.robase.detail : 'Not checked yet'],
+        ];
+        $('wifi-steps').replaceChildren(...steps.map(([label, kind, detail]) => {
+            const mark = kind === 'green' ? '✓ ' : kind === 'grey' ? '' : '✗ ';
+            const b = badge(kind, mark + label);
+            b.title = detail;
+            return b;
+        }));
+        const details = [];
+        if (usb && usb.internet.state !== 'reachable') details.push('Internet via USB: ' + usb.internet.detail);
+        else if (usb && usb.robase.state !== 'reachable') details.push('Robase via USB: ' + usb.robase.detail);
+        $('wifi-step-detail').textContent = details.join(' ');
+        const sys = reach && reach.system;
+        $('wifi-system').textContent = sys
+            ? 'Whole Pi (normal route' + (sys.route_interface ? ' via ' + sys.route_interface : '') + '): internet ' +
+              (PROBE_WORDS[sys.internet.state] || sys.internet.state) + ' · Robase ' +
+              (PROBE_WORDS[sys.robase.state] || sys.robase.state) + '. This may use Ethernet, not the USB adapter.'
+            : '';
+        if (reach && reach.checked_at) $('wifi-checked').textContent = 'Checked ' + new Date(reach.checked_at * 1000).toLocaleTimeString();
+    }
+
+    async function loadStatus(force) {
+        const r = await api('GET', '/settings/wifi/status' + (force ? '?refresh=1' : ''));
+        if (r.ok) renderStatus(r.data);
+        else { setBadge('red', 'Unavailable'); message('err', r.data.error || 'Could not read the Wi-Fi status.'); }
+        renderSteps();
+    }
+    async function loadReach(force) {
+        $('wifi-check-btn').disabled = true;
+        $('wifi-checked').textContent = 'Checking…';
+        const r = await api('GET', '/settings/wifi/connectivity' + (force ? '?refresh=1' : ''));
+        $('wifi-check-btn').disabled = false;
+        if (r.ok) reach = r.data;
+        else $('wifi-checked').textContent = '';
+        renderSteps();
+    }
+
+    // ── networks ────────────────────────────────────────────────────────────
+    async function scan() {
+        if (busy) return;
+        setBusy(true);
+        message('info', 'Scanning with the USB adapter…');
+        const r = await api('POST', '/settings/wifi/scan', {});
+        setBusy(false);
+        if (!r.ok) { message('err', r.data.error || 'The scan failed.'); return; }
+        networks = r.data.networks || [];
+        hiddenCount = r.data.hidden_networks || 0;
+        message(r.data.fresh ? '' : 'warn', r.data.fresh ? '' :
+            'The adapter scanned very recently, so this is its latest list. Scan again in a few seconds for a fresh one.');
+        renderNetworks();
+    }
+
+    function renderNetworks() {
+        const list = $('wifi-networks');
+        list.replaceChildren();
+        openPanel = null;
+        if (!networks.length) {
+            list.append(h('div', {class: 'wifi-empty', text: 'No networks found. Move closer to the router or ' +
+                'phone, or switch its hotspot on, then scan again.'}));
+        }
+        const conn = connected();
+        networks.forEach((net) => {
+            const saved = savedFor(net.ssid_hex);
+            const inUse = !!(conn && conn.ssid_hex === net.ssid_hex);
+            const tags = [];
+            if (inUse) tags.push(badge('green', 'Connected'));
+            else if (saved) tags.push(badge('grey', 'Saved'));
+            if (!net.supported) tags.push(badge('red', 'Not supported'));
+            const panel = h('div', {hidden: true});
+            const head = h('button', {type: 'button', class: 'wifi-net-head', 'aria-expanded': 'false'}, [
+                bars(net.signal),
+                h('div', {style: 'flex:1;min-width:0;'}, [
+                    h('div', {class: 'wifi-net-name', text: net.ssid}),
+                    h('div', {class: 'wifi-net-sub', text: [net.security_label, net.band, net.signal + '%'].filter(Boolean).join(' · ')}),
+                ]),
+                h('div', {style: 'display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end;'}, tags),
+            ]);
+            head.addEventListener('click', () => togglePanel(head, panel, net, saved, inUse));
+            list.append(h('div', {class: 'wifi-net'}, [head, panel]));
+        });
+        if (hiddenCount) {
+            list.append(h('div', {class: 'wifi-empty', text: hiddenCount + ' hidden network(s) nearby. Use ' +
+                '“Connect to a hidden network” below if you know the name.'}));
+        }
+    }
+
+    function togglePanel(head, panel, net, saved, inUse) {
+        const opening = panel.hidden;
+        if (openPanel && openPanel !== panel) { openPanel.hidden = true; openPanel.replaceChildren(); }
+        panel.replaceChildren();
+        panel.hidden = !opening;
+        head.setAttribute('aria-expanded', String(opening));
+        openPanel = opening ? panel : null;
+        if (!opening) return;
+        const note = (text, color) => h('div', {class: 'wifi-form', style: 'font-size:12px;color:' + (color || 'var(--text-dim)') + ';', text});
+        if (!net.supported) {
+            panel.append(note(net.security_label + ' networks can\'t be used here. Only open, WPA/WPA2 Personal and ' +
+                'WPA3 Personal networks are supported.', 'var(--red)'));
+            return;
+        }
+        const form = h('div', {class: 'wifi-form'});
+        let pass = null;
+        if (net.security !== 'open') {
+            pass = h('input', {type: 'password', maxlength: '128', autocomplete: 'off', spellcheck: 'false',
+                               'aria-label': 'Wi-Fi password',
+                               placeholder: saved ? 'New password (optional)' : 'Wi-Fi password'});
+            const show = h('label', {style: 'font-size:11.5px;display:flex;gap:4px;align-items:center;'}, [
+                h('input', {type: 'checkbox', onchange: (e) => { pass.type = e.target.checked ? 'text' : 'password'; }}), 'Show']);
+            form.append(h('div', {class: 'form-group', style: 'margin:0;flex:1 1 220px;'}, [h('label', {text: 'Password'}), pass]), show);
+        }
+        const go = h('button', {type: 'button', class: 'btn btn-gold btn-sm wifi-action', text: inUse ? 'Reconnect' : 'Connect'});
+        go.disabled = busy;
+        go.addEventListener('click', () => {
+            if (saved && (!pass || !pass.value)) { reconnect(saved.uuid, net.ssid); return; }
+            connect({ssid_hex: net.ssid_hex, hidden: false, password: pass ? pass.value : null}, net.ssid, pass);
+        });
+        form.append(go);
+        if (saved && pass) form.append(h('div', {style: 'font-size:11px;color:var(--text-mute);flex-basis:100%;', text: 'Leave the password empty to use the saved one.'}));
+        if (net.security === 'open') form.append(h('div', {style: 'font-size:11px;color:var(--amber);flex-basis:100%;', text: 'Open network: Wi-Fi traffic is not encrypted. Robase requests are still protected by HTTPS.'}));
+        panel.append(form);
+        if (pass) {
+            pass.addEventListener('keydown', (e) => { if (e.key === 'Enter') go.click(); });
+            pass.focus();
+        }
+    }
+
+    function renderSaved() {
+        const list = $('wifi-saved');
+        list.replaceChildren();
+        const saved = (status && status.saved) || [];
+        if (!saved.length) {
+            list.append(h('div', {class: 'wifi-empty', text: 'None yet. Networks you connect to here are saved on the ' +
+                'Pi and rejoin automatically after a restart or a lost signal.'}));
+            return;
+        }
+        saved.forEach((item) => {
+            const sub = [SECURITY[item.security] || item.security, item.hidden ? 'hidden' : '',
+                         item.autoconnect ? 'rejoins automatically' : 'manual only'].filter(Boolean).join(' · ');
+            list.append(h('div', {class: 'wifi-net'}, [h('div', {class: 'wifi-net-head'}, [
+                h('div', {style: 'flex:1;min-width:0;'}, [h('div', {class: 'wifi-net-name', text: item.ssid}),
+                                                          h('div', {class: 'wifi-net-sub', text: sub})]),
+                item.active ? badge('green', 'Connected')
+                    : h('button', {type: 'button', class: 'btn btn-outline btn-sm wifi-action', text: 'Connect',
+                                   disabled: busy, onclick: () => reconnect(item.uuid, item.ssid)}),
+                h('button', {type: 'button', class: 'btn btn-ghost btn-sm wifi-action', text: 'Forget',
+                             disabled: busy, onclick: () => forget(item)}),
+            ])]));
+        });
+    }
+
+    // ── actions ─────────────────────────────────────────────────────────────
+    async function connect(body, label, passInput) {
+        if (busy) return;
+        setBusy(true);
+        message('info', 'Connecting to ' + label + '… this can take up to a minute.');
+        const r = await api('POST', '/settings/wifi/connect', body);
+        body.password = null;
+        if (passInput) passInput.value = '';
+        if (!r.ok) { setBusy(false); message('err', r.data.error || 'Could not start the connection.'); return; }
+        pollJob(r.data.job.id);
+    }
+    async function reconnect(uuid, label) {
+        if (busy) return;
+        setBusy(true);
+        message('info', 'Connecting to ' + label + '…');
+        const r = await api('POST', '/settings/wifi/reconnect', {uuid});
+        if (!r.ok) { setBusy(false); message('err', r.data.error || 'Could not start the connection.'); return; }
+        pollJob(r.data.job.id);
+    }
+    function pollJob(id) {
+        setBusy(true);
+        clearInterval(polling);
+        polling = setInterval(async () => {
+            const r = await api('GET', '/settings/wifi/jobs/' + encodeURIComponent(id));
+            if (!r.ok && r.status !== 404) return; // a blip: keep waiting
+            let job = r.ok ? r.data.job : null;
+            if (job && job.state === 'running') {
+                message('info', job.stage === 'connecting'
+                    ? 'Connecting to ' + job.ssid + '… this can take up to a minute.'
+                    : 'Connected to ' + job.ssid + ' — checking internet access…');
+                return;
+            }
+            clearInterval(polling);
+            polling = null;
+            setBusy(false);
+            if (!job) message('info', 'The Wi-Fi operation finished while this page was away.');
+            else if (job.state === 'succeeded') message(job.warning ? 'warn' : 'ok', job.message);
+            else message('err', job.message + (job.restored === true ? ' The previous USB connection was restored.' : ''));
+            await loadStatus(true);
+            loadReach(false);
+        }, 1000);
+    }
+    async function disconnect() {
+        if (busy || !confirm('Disconnect the USB Wi-Fi? It stays disconnected until you connect again here, ' +
+                             'the adapter is plugged in again, or the Pi restarts. The Secure_Drive hotspot is not affected.')) return;
+        setBusy(true);
+        message('info', 'Disconnecting…');
+        const r = await api('POST', '/settings/wifi/disconnect', {});
+        setBusy(false);
+        message(r.ok ? 'ok' : 'err', r.ok ? 'The USB Wi-Fi is disconnected.' : (r.data.error || 'Disconnect failed.'));
+        await loadStatus(true);
+        loadReach(true);
+    }
+    async function forget(item) {
+        if (busy || !confirm('Forget "' + item.ssid + '"? Its saved password is deleted from the Pi.')) return;
+        setBusy(true);
+        const r = await api('POST', '/settings/wifi/forget', {uuid: item.uuid});
+        setBusy(false);
+        message(r.ok ? 'ok' : 'err', r.ok ? 'Forgot "' + item.ssid + '".' : (r.data.error || 'Could not forget that network.'));
+        await loadStatus(true);
+    }
+
+    $('wifi-scan-btn').addEventListener('click', scan);
+    $('wifi-disconnect-btn').addEventListener('click', disconnect);
+    $('wifi-refresh-btn').addEventListener('click', async () => { await loadStatus(true); loadReach(true); });
+    $('wifi-check-btn').addEventListener('click', () => loadReach(true));
+    $('wifi-hidden-sec').addEventListener('change', (e) => { $('wifi-hidden-pass-wrap').hidden = e.target.value === 'open'; });
+    $('wifi-hidden-btn').addEventListener('click', () => {
+        const ssid = $('wifi-hidden-ssid').value;
+        const security = $('wifi-hidden-sec').value;
+        if (!ssid) { message('err', 'Enter the network name.'); return; }
+        connect({ssid, hidden: true, security, password: security === 'open' ? null : $('wifi-hidden-pass').value},
+                ssid, $('wifi-hidden-pass'));
+    });
+    loadStatus(false).then(() => loadReach(false));
+    setInterval(() => { if (!busy && document.visibilityState === 'visible') loadStatus(false); }, 20000);
+})();
+</script>
+{% endif %}
+
+<!-- Vehicle attribute model status -->
+<div class="card" style="margin-bottom:18px;">
+    <div class="card-header">
+        <div>
+            <div class="card-title">Vehicle Attributes</div>
+            <div class="card-sub">
+                Colour, body type and brand. Advisory evidence for the operator —
+                these never authorise or deny a gate movement.
+            </div>
+        </div>
+        {% set clf = attr_status.get('classifier', {}) %}
+        <span class="badge {{ 'badge-green' if clf.get('trained') else 'badge-amber' }}">
+            <span class="dot"></span>{{ 'Trained' if clf.get('trained') else 'Not trained' }}
+        </span>
+    </div>
+
+    <div style="display:flex;flex-direction:column;gap:10px;">
+        <div style="padding:12px 14px;border-radius:10px;border:1px solid var(--border);
+                    background:{{ 'var(--green-wash)' if clf.get('trained') else 'var(--bg)' }};">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+                <strong style="font-size:13px;">Attribute model (colour / type / brand)</strong>
+                {% if clf.get('model_present') %}
+                    <span class="badge badge-green"><span class="dot"></span>Present</span>
+                {% else %}
+                    <span class="badge badge-amber"><span class="dot"></span>Not trained yet</span>
+                {% endif %}
+                {% if clf.get('model_loaded') %}<span class="badge badge-green" style="font-size:9.5px;">Loaded</span>{% endif %}
+            </div>
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));
+                        gap:6px 14px;font-size:11.5px;color:var(--text-dim);">
+                <div>Architecture: MobileNetV3-Large, 3 heads</div>
+                <div>Input: {{ clf.get('input_size') }}px · format {{ clf.get('model_format') }}</div>
+                <div>Version: <span class="mono">{{ clf.get('version') }}</span></div>
+                <div>Latency budget: {{ attr_status.get('latency_budget_ms') }} ms</div>
+            </div>
+            {% if not clf.get('trained') %}
+            <div style="font-size:11px;color:var(--amber);margin-top:6px;">
+                Colour and brand report UNKNOWN until a checkpoint is trained and
+                promoted. The coarse vehicle class from the existing detector still
+                settles bus / truck / motorcycle.
+            </div>
+            <div style="font-size:11px;color:var(--text-mute);margin-top:4px;font-family:'DM Mono',monospace;">
+                python scripts/train_vehicle_attributes.py --promote
+            </div>
+            {% endif %}
+            {% if clf.get('load_error') %}
+            <div style="font-size:11px;color:var(--red);margin-top:6px;">{{ clf.get('load_error') }}</div>
+            {% endif %}
+        </div>
+
+        {% set logo = attr_status.get('logo_detector', {}) %}
+        <div style="padding:12px 14px;border-radius:10px;border:1px solid var(--border);
+                    background:{{ 'var(--green-wash)' if logo.get('model_present') else 'var(--bg)' }};">
+            <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:6px;">
+                <strong style="font-size:13px;">Vehicle logo detector (brand, stage 1)</strong>
+                {% if logo.get('model_present') %}
+                    <span class="badge badge-green"><span class="dot"></span>Present</span>
+                {% else %}
+                    <span class="badge badge-amber"><span class="dot"></span>Not trained yet</span>
+                {% endif %}
+            </div>
+            <div style="font-size:11.5px;color:var(--text-dim);">
+                Single-class YOLOv8n run on the vehicle crop. Without it the brand is
+                reported UNKNOWN — it is never guessed from the whole-body crop.
+            </div>
+        </div>
+    </div>
+
+    <div style="margin-top:12px;padding:10px 12px;border-radius:8px;background:var(--bg-2);
+                border:1px solid var(--border);font-size:11.5px;color:var(--text-mute);">
+        Heads enabled:
+        {% for head, on in attr_status.get('heads_enabled', {}).items() %}
+            <strong>{{ head }}</strong> {{ 'on' if on else 'off' }}{{ ', ' if not loop.last }}
+        {% endfor %}.
+        Label spaces: {{ attr_status.get('label_space_sizes') }}.
+        Thresholds and switches are the <span class="mono">attr_*</span> keys in
+        <span class="mono">config.json</span>. A missing attribute model never blocks
+        the gate.
+    </div>
+</div>
+
 <!-- Camera selection -->
 <div class="card">
     <div class="card-header">
@@ -68,6 +652,7 @@
                     <span class="btn btn-outline btn-sm" style="opacity:0.5;cursor:default">Selected</span>
                 {% else %}
                     <form method="POST" action="{{ url_for('settings_camera_select') }}">
+                        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
                         <input type="hidden" name="index" value="{{ cam.index }}">
                         <button type="submit" class="btn btn-gold btn-sm">Use This Camera</button>
                     </form>
@@ -95,6 +680,7 @@
         <div class="card-title" style="margin-bottom:10px">Enter Index Manually</div>
         <form method="POST" action="{{ url_for('settings_camera_select') }}"
               style="display:flex;gap:10px;align-items:flex-end">
+            <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
             <div class="form-group" style="margin:0;flex:0 0 160px">
                 <label>Camera Index</label>
                 <input type="number" name="index" min="0" max="99"

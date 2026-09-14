@@ -456,3 +456,30 @@ the database tests use a real temporary SQLite file through
   with this gate's own images, so the detector eventually sees this
   gate's specific mounting height/angle/lens distortion during training,
   not just Roboflow's contributor images.
+
+---
+
+## Vehicle attribute recognition (colour, type, brand)
+
+The gate also records the vehicle's colour, body type and brand at entry
+and re-checks them at exit. That feature is documented separately in
+**[README_VEHICLE_ATTRIBUTES.md](README_VEHICLE_ATTRIBUTES.md)**, with the
+labelling done through the existing review loop in `tools/build_local_plate_test_set.py`.
+
+Two points that matter for this document:
+
+* The attribute stage **reuses the same YOLOv8n vehicle crop** the ANPR
+  region provider already computes. YOLO is not re-run per attribute.
+* Attribute recognition runs **after** ANPR and cannot affect it. A missing
+  or failing attribute model never blocks plate detection, manual plate
+  entry, face capture or fingerprint verification, and never influences an
+  exit decision.
+
+Train the attribute models with:
+
+```bash
+python scripts/train_vehicle_attributes.py --check-data
+```
+
+Like the plate detector, nothing is downloaded at gate-request time and
+model acquisition is an explicit offline step.

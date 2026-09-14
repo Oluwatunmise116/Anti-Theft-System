@@ -17,6 +17,11 @@ import database as db
 import config as cfg
 import gate_manager as gm
 import app as application
+from gate_helpers import staff_client
+
+# These ANPR tests run no face/fingerprint search, so the driver's identity
+# is unresolved. Logging such an entry now needs explicit acknowledgement.
+UNRESOLVED_OK = {"accept_unresolved": True}
 
 
 @pytest.fixture()
@@ -25,7 +30,7 @@ def client(tmp_path, monkeypatch):
     monkeypatch.setattr(db, "DB_PATH", db_path)
     db.init_db()
     application.app.config["TESTING"] = True
-    with application.app.test_client() as c:
+    with staff_client(application.app) as c:
         yield c
 
 
@@ -70,7 +75,8 @@ def test_confirm_requires_plate_number(client):
 
 def test_confirm_manual_entry_when_no_auto_suggestion_exists(client):
     cid = "cid_manual"
-    r = client.post("/gate/entry/confirm", json={"capture_id": cid, "plate": "kja456gh"})
+    r = client.post("/gate/entry/confirm", json={"capture_id": cid, "plate": "kja456gh",
+                                                 **UNRESOLVED_OK})
     assert r.status_code == 200
     trip_id = r.get_json()["trip_id"]
     trip = db.get_trip(trip_id)
@@ -81,7 +87,8 @@ def test_confirm_manual_entry_when_no_auto_suggestion_exists(client):
 def test_confirm_accepts_unchanged_confirmed_auto_reading(client):
     cid = "cid_auto_confirmed"
     _set_plate_session(cid, "KJA456GH", "CONFIRMED", overall_confidence=0.91)
-    r = client.post("/gate/entry/confirm", json={"capture_id": cid, "plate": "KJA456GH"})
+    r = client.post("/gate/entry/confirm", json={"capture_id": cid, "plate": "KJA456GH",
+                                                 **UNRESOLVED_OK})
     assert r.status_code == 200
     trip = db.get_trip(r.get_json()["trip_id"])
     assert trip["plate_source"] == "auto"
@@ -91,7 +98,8 @@ def test_confirm_accepts_unchanged_confirmed_auto_reading(client):
 def test_confirm_rejects_unconfirmed_low_confidence_without_explicit_confirmation(client):
     cid = "cid_low_conf"
     _set_plate_session(cid, "KJA456GH", "LOW_CONFIDENCE", overall_confidence=0.4)
-    r = client.post("/gate/entry/confirm", json={"capture_id": cid, "plate": "KJA456GH"})
+    r = client.post("/gate/entry/confirm", json={"capture_id": cid, "plate": "KJA456GH",
+                                                 **UNRESOLVED_OK})
     assert r.status_code == 409
     data = r.get_json()
     assert data["requires_confirmation"] is True
@@ -102,6 +110,7 @@ def test_confirm_accepts_low_confidence_once_explicitly_confirmed(client):
     _set_plate_session(cid, "KJA456GH", "LOW_CONFIDENCE", overall_confidence=0.4)
     r = client.post("/gate/entry/confirm", json={
         "capture_id": cid, "plate": "KJA456GH", "confirm_low_confidence": True,
+        **UNRESOLVED_OK,
     })
     assert r.status_code == 200
     trip = db.get_trip(r.get_json()["trip_id"])
@@ -113,7 +122,8 @@ def test_confirm_edited_plate_is_manual_correction(client):
     _set_plate_session(cid, "KJA456GH", "LOW_CONFIDENCE", overall_confidence=0.4)
     # Operator disagrees with the auto suggestion and types a different plate —
     # no low-confidence confirmation gate applies to a genuine correction.
-    r = client.post("/gate/entry/confirm", json={"capture_id": cid, "plate": "ABC123DE"})
+    r = client.post("/gate/entry/confirm", json={"capture_id": cid, "plate": "ABC123DE",
+                                                 **UNRESOLVED_OK})
     assert r.status_code == 200
     trip = db.get_trip(r.get_json()["trip_id"])
     assert trip["plate_number"] == "ABC123DE"
@@ -131,7 +141,12 @@ def test_vehicle_snap_requires_capture_id(client):
     assert r.status_code == 400
 
 
-def test_vehicle_auto_start_returns_started_without_crashing_when_no_camera(client):
+def test_vehicle_auto_start_returns_started_without_crashing_when_no_camera(client, monkeypatch):
+    # Fake the missing camera. Otherwise the capture thread opens a real
+    # /dev/video device when one is attached, and that daemon thread can abort
+    # the interpreter at exit ("terminate called without an active exception").
+    import face_manager as fm
+    monkeypatch.setattr(fm, "ensure_camera_running", lambda: False)
     r = client.post("/gate/entry/vehicle/auto-start", json={"capture_id": "cid_nocam"})
     assert r.status_code == 200
     assert r.get_json().get("started") is True

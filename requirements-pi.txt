@@ -24,6 +24,10 @@ opencv-python==4.13.0.92
 pillow==11.1.0
 requests==2.32.3
 PyYAML==6.0.2
+# Loads secrets (FLASK_SECRET_KEY, ROBASE_API_KEY) from .env.
+python-dotenv==1.0.1
+# SMS OTP fallback: normalises saved phone numbers to E.164 before sending.
+phonenumbers==9.0.39
 
 # ── ANPR: detector + OCR ──────────────────────────────────────────────────
 # ultralytics is required to LOAD the plate model even when it has been
@@ -37,6 +41,18 @@ torchvision==0.27.0
 easyocr==1.7.2
 fast-plate-ocr==1.1.0
 onnxruntime>=1.20
+
+# ── Vehicle attributes: colour / type / brand ────────────────────────────
+# Model acquisition is an explicit offline step
+# (scripts/prepare_vehicle_models.py) — the running Flask app never
+# downloads weights. huggingface_hub is needed only by that script and by
+# the readiness check; transformers/timm build the model architectures at
+# load time. If these are absent the gate still runs: every attribute is
+# reported MODEL_UNAVAILABLE and can be entered manually.
+huggingface_hub>=1.0
+safetensors>=0.4
+timm>=1.0
+transformers>=4.40
 
 # ── Fingerprint sensor (Raspberry Pi GPIO/UART hardware only) ────────────
 adafruit-circuitpython-fingerprint==2.2.24

@@ -19,6 +19,29 @@
 .step-label.active { color:var(--text); }
 .step-label.done   { color:var(--green); }
 .step-body { padding-left:36px; }
+
+/* ── Vehicle attribute panel ─────────────────────────────────────────── */
+.attr-grid { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+.attr-cell { padding:8px 10px; border:1px solid var(--border); border-radius:8px;
+             background:var(--surface); min-width:0; }
+.attr-key  { font-size:9px; color:var(--text-mute); text-transform:uppercase;
+             letter-spacing:1px; margin-bottom:4px; }
+.attr-val  { font-size:13px; font-weight:600; display:flex; align-items:center;
+             gap:6px; min-width:0; }
+.attr-val span.txt { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.attr-swatch { width:12px; height:12px; border-radius:3px; flex-shrink:0;
+               border:1px solid var(--border-strong); }
+.attr-conf { font-size:10.5px; color:var(--text-mute); font-family:'DM Mono',monospace;
+             margin-top:3px; }
+.attr-warn { margin-top:8px; padding:7px 10px; border-radius:7px; font-size:11px;
+             background:var(--amber-wash); color:var(--amber);
+             border:1px solid rgba(245,158,11,.25); }
+.attr-edit { margin-top:8px; display:none; }
+.attr-edit .attr-grid { gap:6px; }
+.attr-edit select, .attr-edit input { width:100%; font-size:12px; padding:5px 7px; }
+.attr-top3 { margin-top:6px; font-size:10.5px; color:var(--text-mute);
+             font-family:'DM Mono',monospace; }
+@media (max-width:640px) { .attr-grid { grid-template-columns:1fr; } }
 </style>
 
 <div class="page-header">
@@ -175,8 +198,25 @@
                         <path d="M5 8V6a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v2"/></svg>
                     Auto-Detect Vehicle
                 </button>
+                <button id="btn-upload" class="btn btn-outline btn-sm" onclick="chooseVehicleImage()">
+                    <svg width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.5"
+                         viewBox="0 0 24 24"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                        <polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                    Upload Image
+                </button>
+                <input id="vehicle-file" type="file" accept="image/jpeg,image/png"
+                       style="display:none;" onchange="uploadVehicleImage(this)">
                 <button id="btn-retake" class="btn btn-ghost btn-sm" style="display:none;" onclick="startAutoDetect()">↩ Retry</button>
                 <span id="v1-status" style="font-size:11.5px;color:var(--text-mute);"></span>
+            </div>
+
+            <!-- Image provenance: an uploaded photo is not proof of presence -->
+            <div id="image-source-note" style="display:none;margin-bottom:10px;
+                 padding:7px 10px;border-radius:7px;font-size:11px;
+                 background:var(--amber-wash);color:var(--amber);
+                 border:1px solid rgba(245,158,11,.25);">
+                Analysing an uploaded image. This is not evidence the vehicle was
+                at the gate, and it is recorded as an upload on the trip record.
             </div>
 
             <!-- ANPR result panel -->
@@ -202,6 +242,65 @@
                 </div>
                 <div id="anpr-crop-wrap" style="display:none;">
                     <img id="anpr-crop" src="" style="max-width:160px;max-height:50px;border-radius:4px;border:1px solid var(--border);">
+                </div>
+            </div>
+
+            <!-- Vehicle attribute panel (colour / type / brand) -->
+            <div id="attr-panel" style="display:none;margin-bottom:10px;padding:10px 12px;
+                 border-radius:8px;border:1px solid var(--border);background:var(--bg-2);">
+                <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+                    <span style="font-size:11px;font-weight:700;letter-spacing:.6px;
+                          text-transform:uppercase;color:var(--text-dim);flex:1;">
+                        Vehicle Attributes
+                    </span>
+                    <button type="button" id="btn-attr-edit" class="btn btn-ghost btn-sm"
+                            onclick="toggleAttrEdit()">Correct</button>
+                </div>
+
+                <div class="attr-grid">
+                    <div class="attr-cell">
+                        <div class="attr-key">Colour</div>
+                        <div class="attr-val">
+                            <span class="attr-swatch" id="attr-colour-swatch"></span>
+                            <span class="txt" id="attr-colour-label">—</span>
+                        </div>
+                        <div class="attr-conf" id="attr-colour-conf"></div>
+                    </div>
+                    <div class="attr-cell">
+                        <div class="attr-key">Type</div>
+                        <div class="attr-val"><span class="txt" id="attr-type-label">—</span></div>
+                        <div class="attr-conf" id="attr-type-conf"></div>
+                    </div>
+                    <div class="attr-cell">
+                        <div class="attr-key">Brand</div>
+                        <div class="attr-val"><span class="txt" id="attr-brand-label">—</span></div>
+                        <div class="attr-conf" id="attr-brand-conf"></div>
+                    </div>
+                </div>
+
+                <div class="attr-top3" id="attr-brand-top3"></div>
+                <div class="attr-warn" id="attr-warning" style="display:none;"></div>
+
+                <!-- Manual correction -->
+                <div class="attr-edit" id="attr-edit">
+                    <div class="attr-grid">
+                        <div>
+                            <div class="attr-key">Colour</div>
+                            <select id="attr-colour-input"><option value="">— leave as detected —</option></select>
+                        </div>
+                        <div>
+                            <div class="attr-key">Type</div>
+                            <select id="attr-type-input"><option value="">— leave as detected —</option></select>
+                        </div>
+                        <div>
+                            <div class="attr-key">Brand</div>
+                            <select id="attr-brand-input"><option value="">— leave as detected —</option></select>
+                        </div>
+                    </div>
+                    <div style="font-size:10.5px;color:var(--text-mute);margin-top:6px;">
+                        A corrected value is stored as operator-confirmed and replaces
+                        the automatic reading on this trip.
+                    </div>
                 </div>
             </div>
 
@@ -266,17 +365,38 @@
 
     <!-- CONFIRM -->
     <div class="card">
-        <div class="form-group" style="margin-bottom:10px;">
+        <!-- Exit verification — chosen by the server from the identity checks -->
+        <div id="verify-panel" style="margin-bottom:10px;padding:10px 12px;border-radius:8px;
+             border:1px solid var(--border);background:var(--bg-2);">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+                <span style="font-size:11px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;
+                      color:var(--text-dim);flex:1;">Exit Verification</span>
+                <span id="verify-badge" class="badge badge-grey" style="font-size:10.5px;">Pending</span>
+            </div>
+            <div id="verify-text" style="font-size:12px;color:var(--text-mute);line-height:1.5;">
+                Scan the driver's face and fingerprint — they come first at exit too. If they
+                fail at exit, registered drivers get an SMS code; guests use a passcode they
+                choose now.
+            </div>
+        </div>
+        <div class="form-group" id="passcode-group" style="margin-bottom:10px;display:none;">
             <label>
-                Entry Passcode
+                <span id="passcode-label">Guest Passcode</span>
                 <span style="font-size:10px;color:var(--text-mute);font-weight:400;margin-left:4px;">
-                    optional — driver sets their own code for delegate exits
+                    the driver types {{ passcode_min }}–{{ passcode_max }} digits and needs them to exit
                 </span>
             </label>
-            <input id="passcode-input" type="text" inputmode="numeric" maxlength="4"
-                   placeholder="e.g. 1234  (4 digit Passcode)"
-                   style="font-family:'DM Mono',monospace;font: size 15px;px;letter-spacing:2px;">
+            <input id="passcode-input" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="{{ passcode_min }}" maxlength="{{ passcode_max }}"
+                   placeholder="{{ passcode_min }}–{{ passcode_max }} digits" oninput="checkConfirm()"
+                   style="font-family:'DM Mono',monospace;font-size:15px;letter-spacing:2px;">
         </div>
+        <label id="unresolved-ack-row" style="display:none;gap:8px;align-items:flex-start;
+               font-size:12px;color:var(--amber);margin-bottom:10px;cursor:pointer;">
+            <input type="checkbox" id="unresolved-ack" onchange="checkConfirm()" style="margin-top:2px;">
+            <span>Record this entry as <strong>unresolved</strong>. An administrator must reconcile
+                it before the vehicle can exit.</span>
+        </label>
         <div class="form-group" style="margin-bottom:10px;">
             <label>Notes</label>
             <input id="notes-input" type="text" placeholder="Optional…">
@@ -296,8 +416,11 @@
 
 <script>
 const CAPTURE_ID = "{{ capture_id }}";
+const PASSCODE_MIN = {{ passcode_min }};
+const PASSCODE_MAX = {{ passcode_max }};
 
 // ── State ─────────────────────────────────────────────────────────────────────
+let identity     = null;    // the server's identity view (/gate/entry/identity)
 let step1Done    = false;   // vehicle captured
 let faceChecked  = false;   // face scan completed (match or not-found)
 let fpChecked    = false;   // fp scan completed (match or not-found)
@@ -356,51 +479,262 @@ function onPlateInputEdited() {
     plateEditedByUser = true;
 }
 
+// ── VEHICLE ATTRIBUTES (colour / type / brand) ────────────────────────────────
+// Advisory only: these never authorise or deny anything. Every value is
+// rendered through textContent — model output is never injected as markup.
+
+let attrResult   = null;
+let attrOptions  = null;
+let attrEditOpen = false;
+
+const ATTR_STATUS_TEXT = {
+    CONFIRMED:             'Confirmed',
+    LOW_CONFIDENCE:        'Low confidence',
+    UNKNOWN:               'Unknown',
+    VEHICLE_NOT_LOCALISED: 'Vehicle not linked to plate',
+    MODEL_UNAVAILABLE:     'Model unavailable',
+    FAILED:                'Failed',
+};
+
+// Fixed table keyed by the closed colour label space, mirroring the
+// server-side one. A label can carry no styling payload.
+const ATTR_SWATCHES = {
+    white:'#f3f4f6', black:'#1f2937', silver:'#c0c4c9', grey:'#6b7280',
+    red:'#ef4444', blue:'#3b82f6', green:'#22c55e', gold:'#d4af37',
+    brown:'#78503c', orange:'#f97316', yellow:'#eab308', unknown:'#d1d5db',
+};
+
+function attrTitle(text) {
+    return String(text || '').replace(/[_-]/g, ' ')
+        .replace(/\b\w/g, ch => ch.toUpperCase());
+}
+
+function renderAttrCell(name, value) {
+    const labelEl = document.getElementById('attr-' + name + '-label');
+    const confEl  = document.getElementById('attr-' + name + '-conf');
+    if (!labelEl || !value) { return; }
+
+    const usable = value.value && (value.status === 'CONFIRMED'
+                                   || value.status === 'LOW_CONFIDENCE');
+    labelEl.textContent = usable ? attrTitle(value.value) : '—';
+    labelEl.style.color = usable ? '' : 'var(--text-mute)';
+
+    const statusText = ATTR_STATUS_TEXT[value.status] || value.status;
+    if (usable) {
+        let text = Math.round(value.confidence * 100) + '% · ' + statusText;
+        if (value.votes) { text += ' · ' + value.votes + '/' + value.total_frames + ' frames'; }
+        confEl.textContent = text;
+    } else {
+        confEl.textContent = statusText;
+    }
+    confEl.title = value.rejection_reason || '';
+}
+
+function showAttrPanel(payload) {
+    if (!payload || !payload.colour) return;
+    attrResult = payload;
+    document.getElementById('attr-panel').style.display = '';
+
+    renderAttrCell('colour', payload.colour);
+    renderAttrCell('type',   payload.type);
+    renderAttrCell('brand',  payload.brand);
+
+    const swatch = document.getElementById('attr-colour-swatch');
+    const colour = payload.colour;
+    const usableColour = colour.value && (colour.status === 'CONFIRMED'
+                                          || colour.status === 'LOW_CONFIDENCE');
+    swatch.style.background = usableColour
+        ? (ATTR_SWATCHES[colour.value] || ATTR_SWATCHES.unknown)
+        : ATTR_SWATCHES.unknown;
+
+    // Brand is reported top-3 whenever it is not confirmed.
+    const top3 = document.getElementById('attr-brand-top3');
+    const brand = payload.brand;
+    if (brand.status !== 'CONFIRMED' && brand.top_k && brand.top_k.length) {
+        top3.textContent = 'Brand candidates: ' + brand.top_k
+            .map(t => attrTitle(t.label) + ' ' + Math.round(t.confidence * 100) + '%')
+            .join(' · ');
+    } else {
+        top3.textContent = '';
+    }
+
+    const warn = document.getElementById('attr-warning');
+    if (payload.status === 'VEHICLE_NOT_LOCALISED') {
+        warn.textContent = 'No vehicle box contained the detected plate, so no '
+            + 'vehicle could be linked to it. Attributes were not read rather than '
+            + 'guessed from the wrong vehicle.';
+        warn.style.display = '';
+    } else if (['colour','type','brand'].some(k => payload[k] && payload[k].needs_operator_review)) {
+        warn.textContent = 'AI prediction — verify before accepting. Vehicle '
+            + 'attributes are advisory evidence and never authorise entry or exit.';
+        warn.style.display = '';
+    } else {
+        warn.style.display = 'none';
+    }
+    loadAttrOptions();
+}
+
+function loadAttrOptions() {
+    if (attrOptions) return Promise.resolve(attrOptions);
+    return fetch('/gate/attributes/options').then(r => r.json()).then(d => {
+        attrOptions = d;
+        [['colour', d.colours], ['type', d.types], ['brand', d.brands]]
+            .forEach(([name, items]) => {
+                const select = document.getElementById('attr-' + name + '-input');
+                if (!select) return;
+                items.forEach(item => {
+                    const option = document.createElement('option');
+                    option.value = item.label;
+                    option.textContent = item.display;
+                    select.appendChild(option);
+                });
+            });
+        return d;
+    }).catch(() => null);
+}
+
+function toggleAttrEdit() {
+    attrEditOpen = !attrEditOpen;
+    document.getElementById('attr-edit').style.display = attrEditOpen ? 'block' : 'none';
+    document.getElementById('btn-attr-edit').textContent = attrEditOpen ? 'Done' : 'Correct';
+}
+
+function collectAttrCorrections() {
+    const corrections = {};
+    ['colour', 'type', 'brand'].forEach(name => {
+        const el = document.getElementById('attr-' + name + '-input');
+        if (el && el.value) corrections[name] = el.value;
+    });
+    return corrections;
+}
+
+// ── EXIT VERIFICATION (decided by the server) ─────────────────────────────────
+// The server resolves the driver from this capture's own face/fingerprint
+// search results. At exit, face and fingerprint come first; the fallback is:
+//   registered (either check matched)  → SMS code to the number on the record
+//   guest (both checks found no match) → passcode chosen now
+//   anything else                      → unresolved; needs acknowledgement
+// /gate/entry/confirm re-checks all of this, so these rules are UX only.
+
+function refreshIdentity() {
+    return fetch('/gate/entry/identity?capture_id=' + encodeURIComponent(CAPTURE_ID))
+        .then(r => r.json())
+        .then(d => {
+            if (d.error) return;
+            identity = d;
+            renderVerification();
+            checkConfirm();
+        })
+        .catch(() => {});
+}
+
+function validPasscode(code) {
+    return new RegExp('^\\d{' + PASSCODE_MIN + ',' + PASSCODE_MAX + '}$').test(code);
+}
+
+function passcodeVisible() {
+    return document.getElementById('passcode-group').style.display !== 'none';
+}
+
+function isUnresolvedAcknowledged() {
+    return !!identity && identity.identity_status === 'UNRESOLVED'
+        && document.getElementById('unresolved-ack').checked;
+}
+
+function renderVerification() {
+    const badge  = document.getElementById('verify-badge');
+    const text   = document.getElementById('verify-text');
+    const group  = document.getElementById('passcode-group');
+    const ackRow = document.getElementById('unresolved-ack-row');
+    const label  = document.getElementById('passcode-label');
+    group.style.display  = 'none';
+    ackRow.style.display = 'none';
+    if (!identity) return;
+
+    if (identity.identity_status === 'REGISTERED') {
+        document.getElementById('passcode-input').value = '';
+        if (identity.sms_fallback_available) {
+            badge.className = 'badge badge-green';
+            badge.textContent = 'Registered · SMS fallback';
+            text.textContent = 'Registered driver ' + identity.driver_name + '. At exit: face or '
+                + 'fingerprint; if they fail, an SMS code to ' + identity.phone_hint
+                + '. No passcode is needed.';
+        } else {
+            badge.className = 'badge badge-amber';
+            badge.textContent = 'Registered · no SMS fallback';
+            text.textContent = 'Registered driver ' + identity.driver_name + ', but the record has '
+                + 'no valid phone number, so no SMS code can be sent at exit. Exit will rely on '
+                + 'face or fingerprint unless an administrator corrects the number.';
+        }
+    } else if (identity.identity_status === 'GUEST') {
+        badge.className = 'badge badge-grey';
+        badge.textContent = 'Guest passcode';
+        text.textContent = 'Not found by face or fingerprint. Ask the driver to choose a passcode — '
+            + 'they must enter it to exit.';
+        label.textContent = 'Guest Passcode (required)';
+        group.style.display = '';
+    } else {
+        badge.className = 'badge badge-amber';
+        badge.textContent = 'Unresolved';
+        text.textContent = (identity.reason || 'Identity not resolved.')
+            + ' Complete both checks, or record the entry as unresolved.';
+        label.textContent = 'Passcode (optional — lets an administrator confirm a guest later)';
+        group.style.display = '';
+        ackRow.style.display = 'flex';
+    }
+}
+
 // ── CONFIRM LOGIC ─────────────────────────────────────────────────────────────
-//
-// Rule 1: Driver found in DB (either face OR fingerprint) → enable immediately
-// Rule 2: Driver NOT found → need BOTH face AND fingerprint completed → enable
 
 function checkConfirm() {
     const note = document.getElementById('confirm-note');
     const btn  = document.getElementById('btn-confirm');
+    const code = document.getElementById('passcode-input').value.trim();
+    btn.disabled = true;
+    note.style.color = 'var(--text-mute)';
 
     if (!step1Done) {
-        btn.disabled = true;
         note.textContent = 'Complete step 1 (vehicle) first.';
         return;
     }
+    if (!identity) {
+        note.textContent = 'Scan the driver\'s face and fingerprint to identify them.';
+        return;
+    }
 
-    if (driverInDB) {
+    if (identity.identity_status === 'REGISTERED') {
         btn.disabled = false;
-        note.style.color = 'var(--green)';
-        note.textContent = 'Driver identified in database. Ready to log entry.';
+        note.style.color = identity.sms_fallback_available ? 'var(--green)' : 'var(--amber)';
+        note.textContent = identity.sms_fallback_available
+            ? 'Registered driver identified. Exit: face or fingerprint, SMS code as the fallback.'
+            : 'Registered driver identified, but with no valid phone number there is no SMS fallback.';
         return;
     }
 
-    note.style.color = 'var(--text-mute)';
-
-    if (!faceChecked && !fpChecked) {
-        btn.disabled = true;
-        note.textContent = 'Scan face or fingerprint to verify driver.';
-        return;
-    }
-
-    if (faceChecked && fpChecked) {
-        // Both done, neither found a match — allow entry (unregistered driver)
+    if (identity.identity_status === 'GUEST') {
+        if (!validPasscode(code)) {
+            note.textContent = 'Guest driver — enter a ' + PASSCODE_MIN + '–' + PASSCODE_MAX
+                + ' digit passcode.';
+            return;
+        }
         btn.disabled = false;
         note.style.color = 'var(--amber)';
-        note.textContent = 'Driver not in database — both checks completed.';
+        note.textContent = 'Guest driver — passcode set. They need it to exit.';
         return;
     }
 
-    // One done, not found — need the other
-    btn.disabled = true;
-    if (faceChecked && !fpChecked) {
-        note.textContent = 'Not in database via face — fingerprint scan also required.';
-    } else {
-        note.textContent = 'Not in database via fingerprint — face scan also required.';
+    if (!document.getElementById('unresolved-ack').checked) {
+        note.textContent = 'Identity unresolved — complete both checks or tick "Record this entry as unresolved".';
+        return;
     }
+    if (code && !validPasscode(code)) {
+        note.textContent = 'The optional passcode must be ' + PASSCODE_MIN + '–' + PASSCODE_MAX
+            + ' digits.';
+        return;
+    }
+    btn.disabled = false;
+    note.style.color = 'var(--amber)';
+    note.textContent = 'Will be recorded as unresolved — an administrator must reconcile it before exit.';
 }
 
 // ── PERSON RECORD HELPERS ─────────────────────────────────────────────────────
@@ -501,6 +835,7 @@ function startAutoDetect() {
     setStatus('v1', 'Detecting…');
     showVehicleStream();
     setDetectOverlay('Scanning for vehicle…');
+    document.getElementById('image-source-note').style.display = 'none';
     document.getElementById('step-hint').textContent =
         'Camera live — position the vehicle in frame. Auto-capture will trigger when detected.';
 
@@ -525,6 +860,7 @@ function startAutoDetect() {
             log(msg.type, msg.text);
 
             if (msg.type === 'waiting') setDetectOverlay(msg.text);
+            if (msg.vehicle_attributes) showAttrPanel(msg.vehicle_attributes);
             if (msg.status !== undefined) showAnprPanel(msg);
             else if (msg.plate !== undefined) document.getElementById('plate-input').value = msg.plate;
             if (msg.vehicle_url) {
@@ -568,6 +904,135 @@ function startAutoDetect() {
             stopVehicleStream();
             setDetectOverlay(null);
             document.getElementById('btn-auto').disabled = false;
+            es.close();
+        };
+    });
+}
+
+// ── STEP 1b: UPLOAD A STILL IMAGE ─────────────────────────────────────────────
+// Same analysis pipeline as the camera path — the upload just supplies the
+// vehicle photo, then the existing /gate/entry/vehicle/start stream runs
+// ANPR and the attribute pass over it.
+
+// Phone photos are often 12-48 MP. Shrinking them here, before sending, cuts
+// the Wi-Fi transfer and the Pi's decode time; the server validates and
+// shrinks whatever arrives anyway. Falls back to the original file whenever
+// the browser cannot decode it (e.g. HEIC), so the server's message shows.
+const UPLOAD_MAX_SIDE = {{ upload_max_side }};
+
+function shrinkImage(file) {
+    const original = {blob: file, name: file.name};
+    if (!window.createImageBitmap) return Promise.resolve(original);
+    return createImageBitmap(file, {imageOrientation: 'from-image'}).then(bitmap => {
+        const scale = Math.min(1, UPLOAD_MAX_SIDE / Math.max(bitmap.width, bitmap.height));
+        if (scale === 1 && file.size <= 2 * 1024 * 1024) {
+            bitmap.close();
+            return original;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = Math.round(bitmap.width * scale);
+        canvas.height = Math.round(bitmap.height * scale);
+        canvas.getContext('2d').drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+        bitmap.close();
+        return new Promise(resolve => canvas.toBlob(
+            blob => resolve(blob ? {blob: blob, name: 'vehicle.jpg'} : original),
+            'image/jpeg', 0.9));
+    }).catch(() => original);
+}
+
+function chooseVehicleImage() {
+    document.getElementById('vehicle-file').click();
+}
+
+function uploadVehicleImage(input) {
+    const file = input.files && input.files[0];
+    if (!file) return;
+    input.value = '';                       // allow re-picking the same file
+
+    step1Done = false;
+    stopVehicleStream();
+    setDetectOverlay(null);
+    document.getElementById('btn-auto').disabled   = true;
+    document.getElementById('btn-upload').disabled = true;
+    document.getElementById('anpr-panel').style.display = 'none';
+    document.getElementById('attr-panel').style.display = 'none';
+    document.getElementById('plate-input').value = '';
+    setStatus('v1', 'Uploading…');
+
+    shrinkImage(file)
+        .then(image => {
+            const form = new FormData();
+            form.append('capture_id', CAPTURE_ID);
+            form.append('image', image.blob, image.name);
+            return fetch('/gate/entry/vehicle/upload', {method: 'POST', body: form});
+        })
+        .then(r => r.json().then(d => ({status: r.status, body: d})))
+        .then(({status, body}) => {
+            if (status !== 200 || body.error) {
+                log('error', body.error || 'Upload failed');
+                setStatus('v1', 'Upload failed');
+                document.getElementById('btn-auto').disabled   = false;
+                document.getElementById('btn-upload').disabled = false;
+                return;
+            }
+            document.getElementById('vehicle-ph').style.display = 'none';
+            const img = document.getElementById('vehicle-photo');
+            img.src = body.url + '?t=' + Date.now();
+            img.style.display = '';
+            document.getElementById('image-source-note').style.display = '';
+            log('ok', 'Image uploaded (' + body.width + '×' + body.height + ') — analysing…');
+            analyseUploadedImage();
+        })
+        .catch(() => {
+            log('error', 'Upload failed');
+            setStatus('v1', 'Upload failed');
+            document.getElementById('btn-auto').disabled   = false;
+            document.getElementById('btn-upload').disabled = false;
+        });
+}
+
+function analyseUploadedImage() {
+    setStatus('v1', 'Analysing…');
+    fetch('/gate/entry/vehicle/start', {
+        method: 'POST', headers: {'Content-Type': 'application/json'},
+        body: JSON.stringify({capture_id: CAPTURE_ID}),
+    }).then(r => r.json()).then(d => {
+        if (d.error) {
+            log('error', d.error);
+            setStatus('v1', '');
+            document.getElementById('btn-auto').disabled   = false;
+            document.getElementById('btn-upload').disabled = false;
+            return;
+        }
+        const es = new EventSource('/gate/entry/vehicle/stream/' + CAPTURE_ID);
+        es.onmessage = e => {
+            const msg = JSON.parse(e.data);
+            if (['info','step','ok','warning'].includes(msg.type)) log(msg.type, msg.text);
+            if (msg.vehicle_attributes) showAttrPanel(msg.vehicle_attributes);
+            if (msg.status !== undefined) showAnprPanel(msg);
+
+            if (msg.type === 'success') {
+                step1Done = true;
+                markStep(1, 'done');
+                activateStep(2);
+                activateStep(3);
+                setStatus('v1', '');
+                document.getElementById('btn-auto').disabled        = false;
+                document.getElementById('btn-upload').disabled      = false;
+                document.getElementById('btn-retake').style.display = '';
+                checkConfirm();
+                es.close();
+            }
+            if (msg.type === 'error') {
+                setStatus('v1', 'Analysis failed');
+                document.getElementById('btn-auto').disabled   = false;
+                document.getElementById('btn-upload').disabled = false;
+                es.close();
+            }
+        };
+        es.onerror = () => {
+            document.getElementById('btn-auto').disabled   = false;
+            document.getElementById('btn-upload').disabled = false;
             es.close();
         };
     });
@@ -621,6 +1086,7 @@ function captureDriverFace() {
             }
             if (msg.type === 'success') {
                 faceChecked = true;
+                refreshIdentity();
                 faceBusy    = false;
                 markStep(2, 'done');
                 setStatus('v2', '');
@@ -644,6 +1110,7 @@ function captureDriverFace() {
                 stopFaceStream();
                 document.getElementById('btn-v2').disabled = false;
                 setStatus('v2', 'Failed — try again');
+                refreshIdentity();
                 document.getElementById('step-hint').textContent =
                     'No face detected. Try again or scan fingerprint.';
                 if (!driverInDB) document.getElementById('card-person').style.display = 'none';
@@ -703,6 +1170,7 @@ function startFP() {
             }
             if (msg.type === 'success') {
                 fpChecked = true;
+                refreshIdentity();
                 markStep(3, 'done');
                 document.getElementById('btn-fp-cancel').style.display = 'none';
                 document.getElementById('btn-fp').disabled = false;
@@ -726,6 +1194,7 @@ function startFP() {
                 document.getElementById('btn-fp').disabled = false;
                 document.getElementById('btn-fp-cancel').style.display = 'none';
                 setFpStatus('Failed — try again');
+                refreshIdentity();
                 if (!driverInDB) document.getElementById('card-person').style.display = 'none';
                 es.close();
             }
@@ -761,8 +1230,12 @@ function confirmEntry(confirmLowConfidence) {
             capture_id: CAPTURE_ID,
             plate:      plate,
             notes:      document.getElementById('notes-input').value,
-            passcode:   document.getElementById('passcode-input').value.trim() || null,
+            // Only sent when the server asked for a guest/optional passcode.
+            passcode:   passcodeVisible()
+                ? (document.getElementById('passcode-input').value.trim() || null) : null,
+            accept_unresolved: isUnresolvedAcknowledged(),
             confirm_low_confidence: !!confirmLowConfidence,
+            attribute_corrections: collectAttrCorrections(),
         }),
     }).then(r => r.json().then(d => ({status: r.status, body: d}))).then(({status, body: d}) => {
         if (d.ok) {
@@ -782,6 +1255,7 @@ function confirmEntry(confirmLowConfidence) {
             return;
         }
         alert(d.error || 'Failed to save entry.');
+        if (status === 409 && d.identity_status) refreshIdentity();
         document.getElementById('btn-confirm').disabled = false;
         document.getElementById('btn-confirm').innerHTML =
             '<svg width="14" height="14" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg> Log Entry — GRANTED';
@@ -824,7 +1298,13 @@ function log(type, text) {
                     waiting:'…',db_match:'✓',db_notfound:'—'};
     const row = document.createElement('div');
     row.style.cssText = `color:${colors[type]||'var(--text-dim)'};display:flex;gap:6px;`;
-    row.innerHTML = `<span style="opacity:.5">${icons[type]||'·'}</span><span>${text}</span>`;
+    // textContent, never innerHTML: messages include holder names from the database.
+    const icon = document.createElement('span');
+    icon.style.opacity = '.5';
+    icon.textContent = icons[type] || '·';
+    const message = document.createElement('span');
+    message.textContent = text;
+    row.append(icon, message);
     body.appendChild(row);
     body.scrollTop = body.scrollHeight;
 }
