@@ -32,6 +32,9 @@ models/vehicle_attributes/
 # scripts/train_vehicle_attributes.py, never committed.
 models/vehicle_attributes_mnv3.pt
 models/vehicle_logo_detector.pt
+# Whole-vehicle brand model (~350 MB), fetched by scripts/prepare_brand_model.py
+# at the revision pinned in attributes/brand_classifier.py.
+models/car_brands_beit/
 runs/vehicle_attributes/
 
 # The retired implementation, kept only until the operator deletes it.

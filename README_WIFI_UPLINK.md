@@ -27,7 +27,7 @@ nothing else. The helper enforces the rules itself, on every request:
 | Passwords stay private | The password travels on the helper's stdin and goes to NetworkManager over D-Bus. NetworkManager keeps it in its root-only profile store. It is never put on a command line, in the app database, in the browser, in logs, or in any reply. |
 
 **No sharing is enabled.** This feature does not enable internet sharing, bridging or forwarding.
-Read "Existing settings you should know about" below, though: the hotspot was already set up to share.
+Devices on Secure_Drive still have no internet after the USB Wi-Fi connects; only the Pi does.
 
 ---
 
@@ -54,11 +54,15 @@ They identified the USB adapter correctly and reported the hotspot active on `wl
    you know `user`'s password (set one with `passwd`). Then run
    `sudo visudo -f /etc/sudoers.d/010_pi-nopasswd` and put `#` in front of the rule. The Wi-Fi
    feature keeps working, because it has its own rule.
-2. **Hotspot devices already get internet through the Pi.** `ipv4.method shared` makes
-   NetworkManager forward and NAT hotspot traffic through whatever uplink the Pi has. Today that
-   is Ethernet; once connected, it is also the USB Wi-Fi. This feature does not enable that and does
-   not change it. If hotspot devices must *not* reach the internet, that needs a firewall change;
-   ask before making one.
+2. **Hotspot devices have no internet, but their traffic is forwarded without NAT.** IP
+   forwarding is on (`net.ipv4.ip_forward = 1`), yet the firewall ruleset is empty and
+   `iptables` is not installed. So NetworkManager's shared mode never added its NAT rule.
+   Internet-bound packets from hotspot devices leave through Ethernet with their
+   192.168.50.x addresses, and no reply ever comes back.
+   - Browsers therefore wait for timeouts on anything hosted on the internet (21 s per request on
+     Windows). That is why the app now serves its fonts and Chart.js from the Pi (`static/`).
+   - This feature doesn't change any of it. Turning forwarding off, or adding NAT to give devices
+     internet, is a separate network change: ask before making one.
 3. **The hotspot profiles are bound by interface name (`wlan0`).** If the kernel ever named the
    USB adapter `wlan0` at boot, the hotspot would start on the USB adapter. The helper would then
    refuse to touch that adapter, and the page shows a red warning. Binding the hotspot to the

@@ -26,6 +26,14 @@ DEFAULTS = {
     "attr_logo_model_path": os.path.join("models", "vehicle_logo_detector.pt"),
     "attr_logo_model_format": "pytorch",
     "attr_input_size": 224,
+    # Which brand method runs:
+    #   auto     the whole-vehicle model when its weights are present, else
+    #            the two-stage logo pipeline
+    #   vehicle  always lamnt2008/car_brands_classification on the vehicle
+    #            crop (attributes/brand_classifier.py)
+    #   logo     always badge detector -> badge crop -> brand head
+    "attr_brand_backend": "auto",
+    "attr_brand_model_path": os.path.join("models", "car_brands_beit"),
 
     # ── vehicle localisation ──────────────────────────────────────────────
     # COCO detector input size for the attribute path. MEASURED on the target
@@ -115,6 +123,8 @@ _BOOL_KEYS = {k for k, v in DEFAULTS.items() if isinstance(v, bool)}
 
 _VALID_FORMATS = ("pytorch", "onnx", "ncnn")
 
+_VALID_BRAND_BACKENDS = ("auto", "vehicle", "logo")
+
 
 def validate(raw: dict) -> tuple:
     """
@@ -159,6 +169,15 @@ def validate(raw: dict) -> tuple:
             if backend not in ("auto", "hsv", "head"):
                 warnings.append(f"attr_colour_backend: {value!r} is not one of "
                                 f"('auto', 'hsv', 'head'), using {default!r}")
+            else:
+                settings[key] = backend
+            continue
+
+        if key == "attr_brand_backend":
+            backend = str(value).strip().lower()
+            if backend not in _VALID_BRAND_BACKENDS:
+                warnings.append(f"attr_brand_backend: {value!r} is not one of "
+                                f"{_VALID_BRAND_BACKENDS}, using {default!r}")
             else:
                 settings[key] = backend
             continue

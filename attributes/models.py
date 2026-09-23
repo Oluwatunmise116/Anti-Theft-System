@@ -34,9 +34,13 @@ COLOURS = ["white", "black", "silver", "grey", "red", "blue",
 TYPES = ["sedan", "suv", "hatchback", "minivan", "pickup",
          "bus", "truck", "motorcycle", "tricycle", "other"]
 
+# mazda, bmw, audi, chevrolet and suzuki were added because the whole-vehicle
+# brand model (attributes/brand_classifier.py) predicts them; collapsing
+# them into `other` would throw away a correct answer.
 BRANDS = ["toyota", "honda", "mercedes-benz", "lexus", "nissan",
           "hyundai", "kia", "ford", "volkswagen", "mitsubishi",
-          "peugeot", "innoson", "other"]
+          "peugeot", "innoson", "mazda", "bmw", "audi", "chevrolet",
+          "suzuki", "other"]
 
 LABEL_SPACES = {"colour": COLOURS, "type": TYPES, "brand": BRANDS}
 

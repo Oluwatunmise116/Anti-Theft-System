@@ -5,8 +5,11 @@ Vehicle attribute inference: colour, body type and brand.
       + the plate box from the existing PlateDetector
         -> COCO vehicle boxes, linked to the plate by CONTAINMENT
         -> vehicle crop -> MobileNetV3-Large backbone -> colour head, type head
-        -> vehicle crop -> single-class logo detector
-             -> badge crop -> same backbone -> brand head
+        -> brand, by `attr_brand_backend`:
+             vehicle: vehicle crop -> BEiT make+model classifier
+                      (lamnt2008/car_brands_classification) -> brand
+             logo:    vehicle crop -> single-class logo detector
+                      -> badge crop -> same backbone -> brand head
         -> per-attribute temporal voting
         -> VehicleAttributeResult
 
@@ -36,6 +39,7 @@ from . import settings as attr_settings
 from .classifiers import AttributeClassifier, AttributeModelError, is_valid_crop
 from .colour_baseline import (BODY_REGION, ColourEstimate, HSVColourBackend,
                               estimate_colour)
+from .brand_classifier import BrandModelError, VehicleBrandClassifier
 from .logo import LogoDetector, LogoModelError
 from .vehicle_detector import (AUTHORITATIVE_TYPES, VehicleDetector,
                                contains_fraction, select_vehicle_for_plate)
@@ -49,6 +53,7 @@ __all__ = [
     "SOURCE_AUTO", "SOURCE_MANUAL_CORRECTION", "SOURCE_MANUAL_ENTRY",
     "VehicleAttributePipeline", "build_pipeline",
     "AttributeClassifier", "LogoDetector", "VehicleDetector",
+    "VehicleBrandClassifier",
     "HSVColourBackend", "ColourEstimate", "estimate_colour", "BODY_REGION",
     "select_vehicle_for_plate", "contains_fraction",
 ]
@@ -68,9 +73,11 @@ class VehicleAttributePipeline:
 
     def __init__(self, classifier: AttributeClassifier, logo_detector: LogoDetector,
                  vehicle_detector: VehicleDetector, config: dict,
-                 colour_baseline: Optional[HSVColourBackend] = None):
+                 colour_baseline: Optional[HSVColourBackend] = None,
+                 brand_model: Optional[VehicleBrandClassifier] = None):
         self.classifier = classifier
         self.logo = logo_detector
+        self.brand_model = brand_model
         self.vehicles = vehicle_detector
         self.config = config
         self.colour_baseline = colour_baseline or HSVColourBackend(
@@ -90,6 +97,21 @@ class VehicleAttributePipeline:
             return "head"
         return "head" if getattr(self.classifier, "trained", False) else "hsv"
 
+    def brand_method(self) -> str:
+        """
+        Which brand method this run will use: "vehicle" or "logo".
+
+        `auto` prefers the whole-vehicle model when its weights are on disk;
+        without them the logo pipeline runs, which reports UNKNOWN until a
+        badge detector is trained.
+        """
+        configured = self.config.get("attr_brand_backend", "auto")
+        if configured in ("vehicle", "logo"):
+            return configured
+        if self.brand_model is not None and self.brand_model.model_present():
+            return "vehicle"
+        return "logo"
+
     # ── config helpers ────────────────────────────────────────────────────
     def _cfg(self, key, default):
         return self.config.get(key, default)
@@ -106,6 +128,12 @@ class VehicleAttributePipeline:
                 "configured": self.config.get("attr_colour_backend", "auto"),
                 "active": self.colour_method(),
                 "version": self.colour_baseline.version,
+            },
+            "brand_backend": {
+                "configured": self.config.get("attr_brand_backend", "auto"),
+                "active": self.brand_method(),
+                "model": (self.brand_model.status()
+                          if self.brand_model is not None else None),
             },
             "logo_detector": self.logo.status(),
             "vehicle_detector": self.vehicles.status(),
@@ -127,6 +155,14 @@ class VehicleAttributePipeline:
                     np.zeros((64, 64, 3), dtype=np.uint8), heads=("colour",))
         except Exception as exc:
             log.debug("Attribute warm-up skipped: %s", exc)
+        try:
+            if (self.brand_method() == "vehicle" and self.brand_model is not None
+                    and attr_settings.enabled(self.config, "brand")
+                    and self.brand_model.is_ready()):
+                import numpy as np
+                self.brand_model.predict(np.zeros((64, 64, 3), dtype=np.uint8))
+        except Exception as exc:
+            log.debug("Brand model warm-up skipped: %s", exc)
 
     # ── main entry point ─────────────────────────────────────────────────
     def process_frames(
@@ -182,6 +218,8 @@ class VehicleAttributePipeline:
         localisations: List[VehicleLocalisation] = []
         frames_with_vehicle = 0
         frames_with_logo = 0
+        frames_with_brand_input = 0
+        brand_method = self.brand_method()
         frames_done = 0
         budget_exceeded = False
         classifier_error: Optional[str] = None
@@ -275,8 +313,31 @@ class VehicleAttributePipeline:
                                 index, classifier_error)
                 stage_ms["classify"] += (time.perf_counter() - t0) * 1000.0
 
-            # Brand: badge presence, then the badge crop into the brand head.
-            if attr_settings.enabled(self.config, "brand"):
+            # Brand, whole-vehicle backend: the vehicle crop into the BEiT
+            # make+model classifier, summed per make.
+            if attr_settings.enabled(self.config, "brand") and brand_method == "vehicle":
+                frames_with_brand_input += 1
+                t0 = time.perf_counter()
+                try:
+                    if self.brand_model is None:
+                        raise BrandModelError("no whole-vehicle brand model configured")
+                    scored = self.brand_model.predict(localisation.crop)
+                    last_top_k["brand"] = scored
+                    votes["brand"].append({"label": scored[0].label,
+                                           "confidence": scored[0].confidence,
+                                           "frame_index": index,
+                                           # A trained model of its own: valid
+                                           # whatever state the backbone is in.
+                                           "authoritative": True})
+                except Exception as exc:
+                    classifier_error = f"{type(exc).__name__}: {exc}"
+                    log.warning("Brand classification failed on frame %d: %s",
+                                index, classifier_error)
+                stage_ms["brand"] += (time.perf_counter() - t0) * 1000.0
+
+            # Brand, logo backend: badge presence, then the badge crop into
+            # the brand head.
+            elif attr_settings.enabled(self.config, "brand"):
                 t0 = time.perf_counter()
                 badges = self.logo.detect(localisation.crop, frame_index=index)
                 stage_ms["logo"] += (time.perf_counter() - t0) * 1000.0
@@ -285,6 +346,7 @@ class VehicleAttributePipeline:
                     bh, bw = badge.crop.shape[:2] if badge.crop is not None else (0, 0)
                     if bh >= MIN_BADGE_PIXELS and bw >= MIN_BADGE_PIXELS:
                         frames_with_logo += 1
+                        frames_with_brand_input += 1
                         t0 = time.perf_counter()
                         try:
                             predictions = self.classifier.predict(badge.crop,
@@ -313,7 +375,7 @@ class VehicleAttributePipeline:
             return result
 
         result = self._vote(votes, frames_done, frames_with_vehicle,
-                            frames_with_logo, last_top_k, classifier_error,
+                            frames_with_brand_input, last_top_k, classifier_error,
                             last_hsv_reason)
         winner = next((loc for loc in localisations if loc.found), None)
         if winner is not None:
@@ -327,6 +389,9 @@ class VehicleAttributePipeline:
         result.model_versions = {
             "attributes": self.classifier.version,
             "logo": (self.logo.model_path if self.logo.is_ready() else None),
+            "brand": (self.brand_model.version
+                      if brand_method == "vehicle" and self.brand_model is not None
+                      else None),
         }
         result.status = result.roll_up_status()
         if budget_exceeded:
@@ -349,12 +414,13 @@ class VehicleAttributePipeline:
                 return loc.rejection_reason
         return "No vehicle box contained the plate box on any frame"
 
-    def _vote(self, votes, frames_done, frames_with_vehicle, frames_with_logo,
+    def _vote(self, votes, frames_done, frames_with_vehicle, frames_with_brand_input,
               last_top_k, classifier_error, hsv_reason=None) -> VehicleAttributeResult:
         consensus_frames = int(self._cfg("attr_consensus_frames", 2))
         version = self.classifier.version
         untrained = not self.classifier.trained
         colour_method = self.colour_method()
+        brand_by_vehicle = self.brand_method() == "vehicle"
 
         def value_for(attribute: str, total_frames: int) -> AttributeValue:
             if not attr_settings.enabled(self.config, attribute):
@@ -362,7 +428,7 @@ class VehicleAttributePipeline:
                     attribute, f"{attribute} head is disabled in configuration")
 
             attribute_votes = votes[attribute]
-            if untrained:
+            if untrained and not (attribute == "brand" and brand_by_vehicle):
                 # The stub backbone produces real tensors and real timings,
                 # but its labels are noise. Only votes that did NOT come
                 # from a learned head survive — in practice the coarse COCO
@@ -385,7 +451,7 @@ class VehicleAttributePipeline:
                         "the vehicle body")
                 if classifier_error:
                     return AttributeValue.failed(attribute, classifier_error)
-                if attribute == "brand":
+                if attribute == "brand" and not brand_by_vehicle:
                     # The defining rule of the two-stage design: no badge
                     # means no brand. Never guessed from the body crop.
                     return AttributeValue.unknown(
@@ -400,17 +466,25 @@ class VehicleAttributePipeline:
                 min_confirm_confidence=float(
                     self._cfg(f"attr_{attribute}_min_confidence", 0.55)),
                 top_k=last_top_k.get(attribute),
-                model_version=(self.colour_baseline.version
-                               if attribute == "colour" and colour_method == "hsv"
-                               else version))
+                model_version=self._model_version(attribute, colour_method,
+                                                  brand_by_vehicle, version))
 
-        # Brand votes only across frames where a badge was found, so its
-        # vote count is honest about its own denominator.
+        # Brand votes only across frames that were actually classified for
+        # brand (every localised frame for the vehicle backend, only frames
+        # with a badge for the logo backend), so its vote count is honest
+        # about its own denominator.
         return VehicleAttributeResult(
             colour=value_for("colour", frames_with_vehicle),
             type=value_for("type", frames_with_vehicle),
-            brand=value_for("brand", frames_with_logo),
+            brand=value_for("brand", frames_with_brand_input),
         )
+
+    def _model_version(self, attribute, colour_method, brand_by_vehicle, default):
+        if attribute == "colour" and colour_method == "hsv":
+            return self.colour_baseline.version
+        if attribute == "brand" and brand_by_vehicle and self.brand_model is not None:
+            return self.brand_model.version
+        return default
 
 
 def build_pipeline(config: dict) -> VehicleAttributePipeline:
@@ -432,7 +506,10 @@ def build_pipeline(config: dict) -> VehicleAttributePipeline:
         iou=float(config.get("attr_vehicle_detection_iou", 0.45)),
         imgsz=int(config.get("attr_vehicle_detection_imgsz", 320)),
     )
+    brand_model = VehicleBrandClassifier(
+        attr_settings.resolve_path(config.get("attr_brand_model_path", "")))
     return VehicleAttributePipeline(
         classifier, logo_detector, vehicle_detector, config,
         colour_baseline=HSVColourBackend(
-            min_support=float(config.get("attr_colour_hsv_min_support", 0.28))))
+            min_support=float(config.get("attr_colour_hsv_min_support", 0.28))),
+        brand_model=brand_model)

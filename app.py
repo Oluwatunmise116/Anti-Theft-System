@@ -1885,9 +1885,13 @@ if __name__ == "__main__":
         print("[startup]   No attribute checkpoint — colour falls back to the HSV "
               "baseline; body style and brand report UNKNOWN. Train a head with "
               "scripts/train_vehicle_attributes.py.")
-    if not _attr.get("logo_detector", {}).get("model_present"):
-        print("[startup]   No vehicle-logo detector — brand stays UNKNOWN "
-              "(never guessed from the body crop).")
+    _brand = _attr.get("brand_backend", {})
+    if _brand.get("active") == "vehicle":
+        print("[startup]   Brand: whole-vehicle classifier "
+              f"({(_brand.get('model') or {}).get('model_id')}) — advisory only.")
+    elif not _attr.get("logo_detector", {}).get("model_present"):
+        print("[startup]   No vehicle-logo detector or brand model — brand stays "
+              "UNKNOWN. Fetch one with scripts/prepare_brand_model.py.")
     gm.warm_up_attributes()
     # The Werkzeug debugger executes code from the browser, so it is only
     # available when explicitly requested in development.

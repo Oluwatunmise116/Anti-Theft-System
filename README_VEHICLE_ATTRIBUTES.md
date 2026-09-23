@@ -27,6 +27,7 @@ attributes/
     vehicle_detector.py  COCO boxes + the contains-plate-box linkage
     classifiers.py       MobileNetV3-Large backbone, three heads
     logo.py              single-class badge detector (brand, stage 1)
+    brand_classifier.py  whole-vehicle BEiT make+model classifier (brand)
     consensus.py         per-attribute temporal voting
     __init__.py          orchestration
 ```
@@ -38,7 +39,9 @@ best frames (anpr.preprocessing.select_best_frames)
   + the plate box from the existing PlateDetector
     -> COCO vehicle boxes, linked to the plate by CONTAINMENT
     -> vehicle crop -> MobileNetV3-Large -> colour head, type head
-    -> vehicle crop -> logo detector -> badge crop -> same backbone -> brand head
+    -> brand (attr_brand_backend):
+         vehicle: vehicle crop -> BEiT make+model -> summed per make
+         logo:    vehicle crop -> logo detector -> badge crop -> brand head
     -> per-attribute voting
     -> VehicleAttributeResult
 ```
@@ -66,7 +69,13 @@ tightest one wins — a containment tie-break, not a size heuristic.
 coarse types and skip the learned head entirely. The head only resolves fine
 body style within `car`.
 
-### Brand is two stages
+### Brand: whole-vehicle model (default) or two stages
+
+`attr_brand_backend` picks the method: `auto` (default) uses the
+whole-vehicle model below when `models/car_brands_beit/` exists, otherwise
+the two-stage logo pipeline; `vehicle` and `logo` force one. The rest of
+this section describes the logo pipeline.
+
 
 A badge occupies a few dozen pixels at gate distance, and an end-to-end
 classifier latches onto body shape instead. So:
@@ -89,7 +98,8 @@ COLOURS = ["white","black","silver","grey","red","blue","green","gold",
 TYPES   = ["sedan","suv","hatchback","minivan","pickup","bus","truck",
            "motorcycle","tricycle","other"]
 BRANDS  = ["toyota","honda","mercedes-benz","lexus","nissan","hyundai","kia",
-           "ford","volkswagen","mitsubishi","peugeot","innoson","other"]
+           "ford","volkswagen","mitsubishi","peugeot","innoson","mazda","bmw",
+           "audi","chevrolet","suzuki","other"]
 ```
 
 `unknown` and `other` are trainable classes, not post-hoc thresholds. A night
@@ -149,6 +159,22 @@ either.
 The author's 93% is on the author's split. It does not transfer here, and
 the checkpoint should not be quoted at all.
 
+**Re-checked, including the repo's intermediate checkpoints** (revision
+`7619f8d`, via the official `transformers.pipeline`):
+
+* The published `model.safetensors` is byte-identical to `checkpoint-190`
+  (epoch 10), not the final epoch-30 `checkpoint-570`.
+* The training log explains the flat softmax: final eval loss 1.69 against
+  2.30 for a uniform guess, at 90.75% eval accuracy — the logits barely
+  grew during training. So low confidence alone is not proof of a broken
+  model; the ranking had to be tested separately.
+* The ranking fails too. All three weight sets give the same result on 116
+  gate crops: `family sedan` 103, `SUV` 7, `minibus` 6. On 28 crops typed
+  by eye, **0 of 6 SUVs** (Lexus RX, Ford Escape x3, Qashqai, RAV4) were
+  called SUV; 9 of 28 were right overall, all of them sedans.
+* Its label space has no hatchback, minivan or pickup, which are 12 of
+  those 28 crops (Toyota Matrix, Sienna).
+
 **Consequence:** fine body style (sedan vs SUV vs hatchback) has no working
 model. COCO's `bus` / `truck` / `motorcycle` — the highest-value
 distinctions at a Nigerian gate — are already authoritative and unaffected.
@@ -205,7 +231,47 @@ defaults to `auto`: the head when a checkpoint exists, the baseline
 otherwise. Compare them per lighting bucket with `evaluate-attributes`
 before promoting a head, and expect the head to earn its ~87 ms.
 
-### Brand — deliberately not a headline feature
+### lamnt2008/car_brands_classification — ADOPTED for brand, advisory
+
+A BEiT-base fine-tuned on 107 make+model classes from the Vietnamese market
+(revision `f28052a`, Apache-2.0). It was trained on whole cars, so it takes
+the **vehicle crop**. `attributes/brand_classifier.py` sums the 107
+probabilities per make onto `BRANDS`; Ferrari and VinFast map to `other`.
+Fetch it with `python scripts/prepare_brand_model.py` (inference files
+only, pinned revision, ~350 MB); the app never downloads it.
+
+Measured on this gate's crops (the largest COCO car box in each of 115
+`gate_photos/vehicle_*` images; brands checked by eye on 28 of them, many
+of which are repeat shots of the same few cars, so this is a sanity check
+and **not** an accuracy figure):
+
+| Measurement | Result |
+| --- | --- |
+| Correct make, 28 eyeballed crops | 17 |
+| Wrong make at >= 0.55 (would show as CONFIRMED) | 4 — Toyota Matrix -> Mazda 0.94 and 0.55, Matrix -> Kia 0.56, Skoda Octavia -> Kia 0.94 |
+| The labelled red Corolla (ConvNeXt said Hyundai 0.71) | Toyota 0.92 |
+| Toyota predictions checked | 12 of 12 correct |
+| Random noise | Kia ~0.72 on three seeds |
+| Latency, fp32, 1-4 threads | 680-880 ms; 1.6 s while the Pi was thermally throttled at 83 C |
+| Dynamic int8 | slower (1.27 s) and 11% top-1 disagreement — not used |
+
+What to expect:
+
+* **No Volkswagen, Peugeot, Innoson or Skoda classes.** Those vehicles are
+  forced onto another make, sometimes confidently. No confidence threshold
+  separates these errors from correct answers.
+* The softmax is not calibrated (noise reads as Kia). In the gate the
+  input is always a car box that contains the plate, so noise never
+  reaches it, but treat CONFIRMED as "likely", not "verified".
+* It runs after the plate result is pushed and costs ~0.7 s per frame, so
+  it overruns `attr_latency_budget_ms` on its own. With the default one
+  attribute frame that only delays the attribute message, never the
+  barrier. Raising `attr_capture_frame_count` will not buy more brand
+  votes: the budget stops the loop first.
+* Brand remains advisory: a mismatch at exit routes to the operator
+  dialog, and the UI shows top-3.
+
+### Brand — the logo pipeline
 
 Agreed, and the architecture already reflects the surveillance-logo
 literature: a single-class detector for **presence only**, then a separate
@@ -222,9 +288,8 @@ Candidates surveyed and why none is wired in:
 | `Jordo23/vehicle-classifier` | Worth a trial — EfficientNet-B4 on VMMRdb, ships ONNX, and its card is honest that top-5 is the meaningful measure. Make/model granularity is finer than this application's 13-brand space, so it needs a mapping layer |
 | `haydarkadioglu/brand-eye` | General brand logos, not car marques |
 
-Brand currently reports `UNKNOWN` because no logo detector is trained. That
-is the correct state, not a gap to paper over. If it is ever promoted, the
-UI should show top-3, which the result contract already carries.
+With `attr_brand_backend: logo`, brand reports `UNKNOWN` until a logo
+detector is trained.
 
 ## Measured performance
 
